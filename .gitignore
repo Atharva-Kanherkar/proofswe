@@ -14,3 +14,6 @@
 target/
 /dist/
 /proofswe
+
+# Local review-checkpoint contracts (kept local, never committed)
+testing/

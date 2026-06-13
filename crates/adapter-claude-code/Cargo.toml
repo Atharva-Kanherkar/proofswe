@@ -6,5 +6,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-proofswe-core = { package = "core", path = "../core" }
+proofswe-core = { path = "../proofswe-core" }
 thiserror.workspace = true

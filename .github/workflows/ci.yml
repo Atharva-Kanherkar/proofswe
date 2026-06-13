@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
 
 env:
@@ -28,7 +30,7 @@ jobs:
 
       - name: Ensure clap is not in the dependency tree
         run: |
-          if cargo tree | grep -i clap; then
+          if cargo tree -i clap >/dev/null 2>&1; then
             echo "clap must not be a proofswe dependency" >&2
             exit 1
           fi
@@ -58,6 +60,7 @@ jobs:
 
   release-lto:
     name: release-lto artifact (${{ matrix.os }})
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

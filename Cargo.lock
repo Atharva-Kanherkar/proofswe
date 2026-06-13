@@ -6,7 +6,7 @@ version = 4
 name = "adapter-claude-code"
 version = "0.0.0"
 dependencies = [
- "core",
+ "proofswe-core",
  "thiserror",
 ]
 
@@ -14,7 +14,7 @@ dependencies = [
 name = "adapter-codex"
 version = "0.0.0"
 dependencies = [
- "core",
+ "proofswe-core",
  "thiserror",
 ]
 
@@ -31,15 +31,8 @@ dependencies = [
  "adapter-claude-code",
  "adapter-codex",
  "anyhow",
- "core",
  "lexopt",
-]
-
-[[package]]
-name = "core"
-version = "0.0.0"
-dependencies = [
- "thiserror",
+ "proofswe-core",
 ]
 
 [[package]]
@@ -55,6 +48,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proofswe-core"
+version = "0.0.0"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]

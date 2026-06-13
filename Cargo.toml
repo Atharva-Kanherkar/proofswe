@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/core",
+    "crates/proofswe-core",
     "crates/adapter-claude-code",
     "crates/adapter-codex",
     "crates/cli",

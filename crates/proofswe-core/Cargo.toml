@@ -1,12 +1,9 @@
 [package]
-name = "core"
+name = "proofswe-core"
 version = "0.0.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-
-[lib]
-name = "proofswe_core"
 
 [dependencies]
 thiserror.workspace = true

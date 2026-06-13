@@ -14,4 +14,4 @@ adapter-claude-code = { path = "../adapter-claude-code" }
 adapter-codex = { path = "../adapter-codex" }
 anyhow.workspace = true
 lexopt.workspace = true
-proofswe-core = { package = "core", path = "../core" }
+proofswe-core = { path = "../proofswe-core" }
