@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -31,5 +33,22 @@ func TestRunUnknownCommand(t *testing.T) {
 	})
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("Run() error = %v, want ErrUsage", err)
+	}
+}
+
+func TestDefaultAdaptersIncludesClaudeCode(t *testing.T) {
+	adapters := defaultAdapters()
+	if len(adapters) != 1 {
+		t.Fatalf("len(defaultAdapters()) = %d, want 1", len(adapters))
+	}
+
+	var found bool
+	for _, adapter := range adapters {
+		if adapterType := fmt.Sprintf("%T", adapter); adapterType == "claudecode.Adapter" || strings.Contains(adapterType, "/claudecode.") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("defaultAdapters() = %#v, want Claude Code adapter", adapters)
 	}
 }

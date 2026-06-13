@@ -1,0 +1,184 @@
+[
+  {
+    "schema_version": 1,
+    "type": "session_start",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "evt-start",
+      "ts": "2026-06-01T00:00:00Z"
+    }
+  },
+  {
+    "schema_version": 1,
+    "type": "session_start",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "evt-system",
+      "ts": "2026-06-01T00:00:01Z",
+      "turn_index": 1
+    }
+  },
+  {
+    "schema_version": 1,
+    "type": "user_prompt",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "evt-user",
+      "ts": "2026-06-01T00:00:02Z",
+      "turn_index": 2
+    },
+    "prompt_hash": "sha256:ce23c19aa3407f020c2f5d7fa2b319b7b86847bfc44713fe9817194e06b73bc4"
+  },
+  {
+    "schema_version": 1,
+    "type": "assistant_message",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "model": {
+      "id": "claude-opus-4-7"
+    },
+    "event": {
+      "id": "evt-assistant",
+      "ts": "2026-06-01T00:00:03Z",
+      "turn_index": 3,
+      "is_subagent": true
+    },
+    "metrics": {
+      "input_tokens": 11,
+      "output_tokens": 22,
+      "cache_creation_input_tokens": 33,
+      "cache_read_input_tokens": 44
+    },
+    "message_hash": "sha256:c45281bbf673aadda8b06028d5f8f1936c9eb9cd4f5a9cf993bf3a12867e28ab"
+  },
+  {
+    "schema_version": 1,
+    "type": "tool_call",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "model": {
+      "id": "claude-opus-4-7"
+    },
+    "event": {
+      "id": "evt-assistant",
+      "ts": "2026-06-01T00:00:03Z",
+      "turn_index": 3,
+      "is_subagent": true
+    },
+    "metrics": {
+      "input_tokens": 11,
+      "output_tokens": 22,
+      "cache_creation_input_tokens": 33,
+      "cache_read_input_tokens": 44
+    },
+    "tool_call_id": "toolu_fixture",
+    "name": "Bash",
+    "arguments": {
+      "input_hash": "sha256:a030d3e85252280044dd4a05fa110d716a9949ce1b04494094a3c79d9dab6596",
+      "input_keys": [
+        "command_hash"
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "type": "tool_result",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "evt-tool-result",
+      "ts": "2026-06-01T00:00:04Z",
+      "turn_index": 4,
+      "is_subagent": true
+    },
+    "tool_call_id": "toolu_fixture",
+    "exit_code": 0,
+    "result": {
+      "content_hash": "sha256:c3599088ef6602806bde57b73651ba24db7a23c8090217c68d584d3d3e5cbbc7",
+      "content_type": "string",
+      "is_error": false
+    }
+  },
+  {
+    "schema_version": 1,
+    "type": "session_end",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "evt-result",
+      "ts": "2026-06-01T00:00:05Z",
+      "turn_index": 5
+    },
+    "reason": "success"
+  },
+  {
+    "type": "attachment"
+  },
+  {
+    "type": "file-history-snapshot"
+  },
+  {
+    "type": "permission-mode"
+  },
+  {
+    "type": "mode"
+  },
+  {
+    "type": "last-prompt"
+  },
+  {
+    "type": "ai-title"
+  }
+]

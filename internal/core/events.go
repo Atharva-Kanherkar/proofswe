@@ -26,8 +26,9 @@ type NormalizedEvent interface {
 }
 
 type SourceMeta struct {
-	Harness HarnessName `json:"harness" jsonschema:"title=Harness"`
-	Path    string      `json:"path,omitempty" jsonschema:"title=Transcript path"`
+	Harness   HarnessName `json:"harness" jsonschema:"title=Harness"`
+	Path      string      `json:"path,omitempty" jsonschema:"title=Transcript path"`
+	GitBranch string      `json:"git_branch,omitempty" jsonschema:"title=Git branch"`
 }
 
 type SessionMeta struct {
@@ -40,14 +41,18 @@ type ModelMeta struct {
 }
 
 type EventMeta struct {
-	ID        string    `json:"id,omitempty" jsonschema:"title=Event ID"`
-	Timestamp time.Time `json:"ts,omitzero" jsonschema:"title=Timestamp"`
+	ID         string    `json:"id,omitempty" jsonschema:"title=Event ID"`
+	Timestamp  time.Time `json:"ts,omitzero" jsonschema:"title=Timestamp"`
+	TurnIndex  int       `json:"turn_index,omitempty" jsonschema:"minimum=0"`
+	IsSubagent bool      `json:"is_subagent,omitempty" jsonschema:"title=Is subagent"`
 }
 
 type Metrics struct {
-	InputTokens  int64 `json:"input_tokens,omitempty" jsonschema:"minimum=0"`
-	OutputTokens int64 `json:"output_tokens,omitempty" jsonschema:"minimum=0"`
-	DurationMS   int64 `json:"duration_ms,omitempty" jsonschema:"minimum=0"`
+	InputTokens              int64 `json:"input_tokens,omitempty" jsonschema:"minimum=0"`
+	OutputTokens             int64 `json:"output_tokens,omitempty" jsonschema:"minimum=0"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens,omitempty" jsonschema:"minimum=0"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens,omitempty" jsonschema:"minimum=0"`
+	DurationMS               int64 `json:"duration_ms,omitempty" jsonschema:"minimum=0"`
 }
 
 type Envelope struct {

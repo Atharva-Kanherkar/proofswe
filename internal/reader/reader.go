@@ -36,6 +36,31 @@ type Stats struct {
 }
 
 func ReadNew(file *os.File, cursor int64, opts Options, emit func(core.NormalizedEvent) error) (Stats, error) {
+	if emit == nil {
+		return Stats{}, fmt.Errorf("reader: nil emit callback")
+	}
+
+	var emitted int
+	var malformed int
+	stats, err := ReadNewLines(file, cursor, opts, func(line []byte, offset int64) error {
+		event, err := ParseLine(line)
+		if err != nil {
+			malformed++
+			logReaderError(opts.Logger, "skip malformed jsonl line", err, "offset", offset)
+			return nil
+		}
+		if err := emit(event); err != nil {
+			return err
+		}
+		emitted++
+		return nil
+	})
+	stats.Emitted = emitted
+	stats.Malformed = malformed
+	return stats, err
+}
+
+func ReadNewLines(file *os.File, cursor int64, opts Options, emit func(line []byte, offset int64) error) (Stats, error) {
 	if file == nil {
 		return Stats{}, fmt.Errorf("reader: nil file")
 	}
@@ -80,15 +105,8 @@ func ReadNew(file *os.File, cursor int64, opts Options, emit func(core.Normalize
 			continue
 		}
 
-		event, err := ParseLine(line)
-		if err != nil {
-			stats.Cursor = nextCursor
-			stats.Malformed++
-			logReaderError(opts.Logger, "skip malformed jsonl line", err, "offset", lineOffset)
-			continue
-		}
-		if err := emit(event); err != nil {
-			return stats, fmt.Errorf("reader: emit event at offset %d: %w", lineOffset, err)
+		if err := emit(line, lineOffset); err != nil {
+			return stats, fmt.Errorf("reader: emit line at offset %d: %w", lineOffset, err)
 		}
 		stats.Cursor = nextCursor
 		stats.Emitted++
