@@ -41,7 +41,7 @@ type ModelMeta struct {
 
 type EventMeta struct {
 	ID        string    `json:"id,omitempty" jsonschema:"title=Event ID"`
-	Timestamp time.Time `json:"ts,omitempty" jsonschema:"title=Timestamp"`
+	Timestamp time.Time `json:"ts,omitzero" jsonschema:"title=Timestamp"`
 }
 
 type Metrics struct {
@@ -55,9 +55,9 @@ type Envelope struct {
 	Type          EventType   `json:"type"`
 	Source        SourceMeta  `json:"source"`
 	Session       SessionMeta `json:"session"`
-	Model         ModelMeta   `json:"model,omitempty"`
-	Event         EventMeta   `json:"event,omitempty"`
-	Metrics       Metrics     `json:"metrics,omitempty"`
+	Model         ModelMeta   `json:"model,omitzero"`
+	Event         EventMeta   `json:"event,omitzero"`
+	Metrics       Metrics     `json:"metrics,omitzero"`
 }
 
 type SessionStart struct {

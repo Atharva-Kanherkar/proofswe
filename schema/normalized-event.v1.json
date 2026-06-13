@@ -32,7 +32,6 @@
           "title": "Message hash"
         }
       },
-      "additionalProperties": false,
       "type": "object",
       "required": [
         "schema_version",
@@ -53,7 +52,6 @@
           "title": "Timestamp"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "Metrics": {
@@ -71,7 +69,6 @@
           "minimum": 0
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "ModelMeta": {
@@ -81,7 +78,6 @@
           "title": "Model ID"
         }
       },
-      "additionalProperties": false,
       "type": "object"
     },
     "SessionEnd": {
@@ -114,7 +110,6 @@
           "title": "End reason"
         }
       },
-      "additionalProperties": false,
       "type": "object",
       "required": [
         "schema_version",
@@ -134,7 +129,6 @@
           "title": "Working directory"
         }
       },
-      "additionalProperties": false,
       "type": "object",
       "required": [
         "id"
@@ -166,7 +160,6 @@
           "$ref": "#/$defs/Metrics"
         }
       },
-      "additionalProperties": false,
       "type": "object",
       "required": [
         "schema_version",
@@ -186,7 +179,6 @@
           "title": "Transcript path"
         }
       },
-      "additionalProperties": false,
       "type": "object",
       "required": [
         "harness"
@@ -230,7 +222,6 @@
           "title": "Tool arguments"
         }
       },
-      "additionalProperties": false,
       "type": "object",
       "required": [
         "schema_version",
@@ -277,7 +268,6 @@
           "title": "Tool result"
         }
       },
-      "additionalProperties": false,
       "type": "object",
       "required": [
         "schema_version",
@@ -293,7 +283,6 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
       "type": "object",
       "required": [
         "type"
@@ -329,7 +318,6 @@
           "title": "Prompt hash"
         }
       },
-      "additionalProperties": false,
       "type": "object",
       "required": [
         "schema_version",

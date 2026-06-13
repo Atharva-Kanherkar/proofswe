@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,23 @@ func TestUnmodeledInputDecodesToUnknownWithoutError(t *testing.T) {
 	}
 	if diff := cmp.Diff(json.RawMessage(raw), unknown.Raw); diff != "" {
 		t.Fatalf("Unknown.Raw mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestZeroValueEnvelopeOmitsOptionalMetadata(t *testing.T) {
+	data, err := MarshalNormalizedEvent(&SessionStart{Envelope: Envelope{
+		Source:  SourceMeta{Harness: "codex"},
+		Session: SessionMeta{ID: "session"},
+	}})
+	if err != nil {
+		t.Fatalf("MarshalNormalizedEvent() error = %v", err)
+	}
+
+	got := string(data)
+	for _, field := range []string{`"model"`, `"event"`, `"metrics"`, `"ts"`} {
+		if strings.Contains(got, field) {
+			t.Fatalf("marshaled zero-value envelope contains %s: %s", field, got)
+		}
 	}
 }
 

@@ -21,8 +21,9 @@ func Bytes() ([]byte, error) {
 
 func Schema() *jsonschema.Schema {
 	reflector := &jsonschema.Reflector{
-		Anonymous:      true,
-		DoNotReference: false,
+		Anonymous:                 true,
+		DoNotReference:            false,
+		AllowAdditionalProperties: true,
 	}
 
 	root := &jsonschema.Schema{
