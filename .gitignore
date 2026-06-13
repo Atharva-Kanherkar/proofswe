@@ -10,6 +10,7 @@
 .proofswe/
 *.jsonl
 
-# Build artifacts (Go binary lands here once implementation starts)
+# Build artifacts
+target/
 /dist/
 /proofswe

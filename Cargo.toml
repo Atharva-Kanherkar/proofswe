@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/adapter-claude-code",
+    "crates/adapter-codex",
+    "crates/cli",
+    "crates/xtask",
+]
+default-members = ["crates/cli"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/Atharva-Kanherkar/proofswe"
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+lexopt = "0.3.1"
+thiserror = "2.0.17"
+
+[profile.release-lto]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+opt-level = "s"
