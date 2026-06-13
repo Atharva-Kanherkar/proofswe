@@ -1,0 +1,118 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build static binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          suffix=""
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            suffix=".exe"
+          fi
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "dist/proofswe${suffix}" ./cmd/proofswe
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gofumpt
+        run: GOBIN="${PWD}/.ci-bin" go install mvdan.cc/gofumpt@v0.9.2
+
+      - name: Check formatting
+        run: test -z "$("${PWD}/.ci-bin/gofumpt" -l .)"
+
+  static-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build static binary
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o dist/proofswe ./cmd/proofswe
+
+      - name: Assert Linux binary is static
+        run: |
+          file dist/proofswe
+          file dist/proofswe | grep -q "statically linked"
+          ldd dist/proofswe 2>&1 | grep -q "not a dynamic executable"
+
+      - name: Upload Linux static binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: proofswe-linux-amd64
+          path: dist/proofswe
+          if-no-files-found: error
+
+      - name: Assert no mmap usage
+        shell: bash
+        run: |
+          if grep -RInE --include='*.go' '"golang.org/x/exp/mmap"|syscall\.Mmap|unix\.Mmap' .; then
+            echo "mmap is forbidden for live transcript reads"
+            exit 1
+          fi
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.12.2
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+          go-package: ./...
