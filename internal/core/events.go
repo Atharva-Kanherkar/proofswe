@@ -187,12 +187,12 @@ func newModeled[T interface {
 	}
 }
 
-func (e *SessionStart) ensureEnvelope(t EventType)     { e.Envelope.ensure(t) }
-func (e *UserPrompt) ensureEnvelope(t EventType)       { e.Envelope.ensure(t) }
-func (e *AssistantMessage) ensureEnvelope(t EventType) { e.Envelope.ensure(t) }
-func (e *ToolCall) ensureEnvelope(t EventType)         { e.Envelope.ensure(t) }
-func (e *ToolResult) ensureEnvelope(t EventType)       { e.Envelope.ensure(t) }
-func (e *SessionEnd) ensureEnvelope(t EventType)       { e.Envelope.ensure(t) }
+func (e *SessionStart) ensureEnvelope(t EventType)     { e.ensure(t) }
+func (e *UserPrompt) ensureEnvelope(t EventType)       { e.ensure(t) }
+func (e *AssistantMessage) ensureEnvelope(t EventType) { e.ensure(t) }
+func (e *ToolCall) ensureEnvelope(t EventType)         { e.ensure(t) }
+func (e *ToolResult) ensureEnvelope(t EventType)       { e.ensure(t) }
+func (e *SessionEnd) ensureEnvelope(t EventType)       { e.ensure(t) }
 
 func (e *Envelope) ensure(t EventType) {
 	e.SchemaVersion = SchemaVersion
@@ -200,37 +200,37 @@ func (e *Envelope) ensure(t EventType) {
 }
 
 func (e SessionStart) MarshalJSON() ([]byte, error) {
-	e.Envelope.ensure(EventTypeSessionStart)
+	e.ensure(EventTypeSessionStart)
 	type alias SessionStart
 	return json.Marshal(alias(e))
 }
 
 func (e UserPrompt) MarshalJSON() ([]byte, error) {
-	e.Envelope.ensure(EventTypeUserPrompt)
+	e.ensure(EventTypeUserPrompt)
 	type alias UserPrompt
 	return json.Marshal(alias(e))
 }
 
 func (e AssistantMessage) MarshalJSON() ([]byte, error) {
-	e.Envelope.ensure(EventTypeAssistantMessage)
+	e.ensure(EventTypeAssistantMessage)
 	type alias AssistantMessage
 	return json.Marshal(alias(e))
 }
 
 func (e ToolCall) MarshalJSON() ([]byte, error) {
-	e.Envelope.ensure(EventTypeToolCall)
+	e.ensure(EventTypeToolCall)
 	type alias ToolCall
 	return json.Marshal(alias(e))
 }
 
 func (e ToolResult) MarshalJSON() ([]byte, error) {
-	e.Envelope.ensure(EventTypeToolResult)
+	e.ensure(EventTypeToolResult)
 	type alias ToolResult
 	return json.Marshal(alias(e))
 }
 
 func (e SessionEnd) MarshalJSON() ([]byte, error) {
-	e.Envelope.ensure(EventTypeSessionEnd)
+	e.ensure(EventTypeSessionEnd)
 	type alias SessionEnd
 	return json.Marshal(alias(e))
 }

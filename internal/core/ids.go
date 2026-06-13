@@ -1,6 +1,8 @@
 package core
 
-type SessionId string
-type ToolCallId string
-type HarnessName string
-type ModelId string
+type (
+	SessionId   string
+	ToolCallId  string
+	HarnessName string
+	ModelId     string
+)

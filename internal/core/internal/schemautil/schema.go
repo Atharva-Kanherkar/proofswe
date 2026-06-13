@@ -62,10 +62,14 @@ func CheckGolden(path string) error {
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(want, got) {
-		return fmt.Errorf("%s is stale; run go generate ./...", path)
+	if !bytes.Equal(normalizeNewlines(want), normalizeNewlines(got)) {
+		return fmt.Errorf("%s is stale; run go generate ./... before committing", path)
 	}
 	return nil
+}
+
+func normalizeNewlines(data []byte) []byte {
+	return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 }
 
 func reflectInto(root *jsonschema.Schema, reflector *jsonschema.Reflector, value any, name string, eventType core.EventType) {
