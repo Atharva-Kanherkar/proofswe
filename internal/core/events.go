@@ -123,10 +123,18 @@ func MarshalNormalizedEvent(event NormalizedEvent) ([]byte, error) {
 }
 
 func UnmarshalNormalizedEvent(data []byte) (NormalizedEvent, error) {
+	return UnmarshalNormalizedEventWith(data, json.Unmarshal)
+}
+
+func UnmarshalNormalizedEventWith(data []byte, unmarshal func([]byte, any) error) (NormalizedEvent, error) {
+	if unmarshal == nil {
+		return nil, NewError(ErrorKindInvalidEvent, "nil normalized event decoder", nil)
+	}
+
 	var probe struct {
 		Type EventType `json:"type"`
 	}
-	if err := json.Unmarshal(data, &probe); err != nil {
+	if err := unmarshal(data, &probe); err != nil {
 		return nil, NewError(ErrorKindInvalidEvent, "decode event discriminator", err)
 	}
 	if probe.Type == "" {
@@ -135,17 +143,17 @@ func UnmarshalNormalizedEvent(data []byte) (NormalizedEvent, error) {
 
 	switch probe.Type {
 	case EventTypeSessionStart:
-		return unmarshalModeled[*SessionStart](data, EventTypeSessionStart)
+		return unmarshalModeled[*SessionStart](data, EventTypeSessionStart, unmarshal)
 	case EventTypeUserPrompt:
-		return unmarshalModeled[*UserPrompt](data, EventTypeUserPrompt)
+		return unmarshalModeled[*UserPrompt](data, EventTypeUserPrompt, unmarshal)
 	case EventTypeAssistantMessage:
-		return unmarshalModeled[*AssistantMessage](data, EventTypeAssistantMessage)
+		return unmarshalModeled[*AssistantMessage](data, EventTypeAssistantMessage, unmarshal)
 	case EventTypeToolCall:
-		return unmarshalModeled[*ToolCall](data, EventTypeToolCall)
+		return unmarshalModeled[*ToolCall](data, EventTypeToolCall, unmarshal)
 	case EventTypeToolResult:
-		return unmarshalModeled[*ToolResult](data, EventTypeToolResult)
+		return unmarshalModeled[*ToolResult](data, EventTypeToolResult, unmarshal)
 	case EventTypeSessionEnd:
-		return unmarshalModeled[*SessionEnd](data, EventTypeSessionEnd)
+		return unmarshalModeled[*SessionEnd](data, EventTypeSessionEnd, unmarshal)
 	default:
 		raw := append(json.RawMessage(nil), data...)
 		return Unknown{Type: probe.Type, Raw: raw}, nil
@@ -156,9 +164,9 @@ func unmarshalModeled[T interface {
 	NormalizedEvent
 	ensureEnvelope(EventType)
 	*SessionStart | *UserPrompt | *AssistantMessage | *ToolCall | *ToolResult | *SessionEnd
-}](data []byte, eventType EventType) (NormalizedEvent, error) {
+}](data []byte, eventType EventType, unmarshal func([]byte, any) error) (NormalizedEvent, error) {
 	event := newModeled[T]()
-	if err := json.Unmarshal(data, event); err != nil {
+	if err := unmarshal(data, event); err != nil {
 		return nil, NewError(ErrorKindInvalidEvent, "decode normalized event", err)
 	}
 	event.ensureEnvelope(eventType)

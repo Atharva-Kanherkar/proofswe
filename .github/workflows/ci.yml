@@ -29,6 +29,9 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Test fast JSON decoder
+        run: go test -tags proofswe_fastjson ./internal/reader
+
       - name: Vet
         run: go vet ./...
 
