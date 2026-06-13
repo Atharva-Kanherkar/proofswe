@@ -1,0 +1,15 @@
+# OS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Local data (proofswe stores datapoints under here; never commit real sessions)
+.proofswe/
+*.jsonl
+
+# Build artifacts (Go binary lands here once implementation starts)
+/dist/
+/proofswe
