@@ -1,0 +1,24 @@
+name: reader-long
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  constant-memory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run large JSONL reader memory test
+        env:
+          PROOFSWE_RUN_LONG_READER_TEST: "1"
+        run: go test -run '^TestReadNewConstantMemoryLargeJSONL$' ./internal/reader
