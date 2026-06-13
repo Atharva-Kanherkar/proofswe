@@ -1,0 +1,355 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proofswe.dev/schema/normalized-event.v1.json",
+  "$defs": {
+    "AssistantMessage": {
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "assistant_message"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceMeta"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionMeta"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelMeta"
+        },
+        "event": {
+          "$ref": "#/$defs/EventMeta"
+        },
+        "metrics": {
+          "$ref": "#/$defs/Metrics"
+        },
+        "message_hash": {
+          "type": "string",
+          "title": "Message hash"
+        }
+      },
+      "type": "object",
+      "required": [
+        "schema_version",
+        "type",
+        "source",
+        "session"
+      ]
+    },
+    "EventMeta": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Event ID"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Timestamp"
+        }
+      },
+      "type": "object"
+    },
+    "Metrics": {
+      "properties": {
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "type": "object"
+    },
+    "ModelMeta": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Model ID"
+        }
+      },
+      "type": "object"
+    },
+    "SessionEnd": {
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "session_end"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceMeta"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionMeta"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelMeta"
+        },
+        "event": {
+          "$ref": "#/$defs/EventMeta"
+        },
+        "metrics": {
+          "$ref": "#/$defs/Metrics"
+        },
+        "reason": {
+          "type": "string",
+          "title": "End reason"
+        }
+      },
+      "type": "object",
+      "required": [
+        "schema_version",
+        "type",
+        "source",
+        "session"
+      ]
+    },
+    "SessionMeta": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Session ID"
+        },
+        "cwd": {
+          "type": "string",
+          "title": "Working directory"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id"
+      ]
+    },
+    "SessionStart": {
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "session_start"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceMeta"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionMeta"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelMeta"
+        },
+        "event": {
+          "$ref": "#/$defs/EventMeta"
+        },
+        "metrics": {
+          "$ref": "#/$defs/Metrics"
+        }
+      },
+      "type": "object",
+      "required": [
+        "schema_version",
+        "type",
+        "source",
+        "session"
+      ]
+    },
+    "SourceMeta": {
+      "properties": {
+        "harness": {
+          "type": "string",
+          "title": "Harness"
+        },
+        "path": {
+          "type": "string",
+          "title": "Transcript path"
+        }
+      },
+      "type": "object",
+      "required": [
+        "harness"
+      ]
+    },
+    "ToolCall": {
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "tool_call"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceMeta"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionMeta"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelMeta"
+        },
+        "event": {
+          "$ref": "#/$defs/EventMeta"
+        },
+        "metrics": {
+          "$ref": "#/$defs/Metrics"
+        },
+        "tool_call_id": {
+          "type": "string",
+          "title": "Tool call ID"
+        },
+        "name": {
+          "type": "string",
+          "title": "Tool name"
+        },
+        "arguments": {
+          "type": "object",
+          "title": "Tool arguments"
+        }
+      },
+      "type": "object",
+      "required": [
+        "schema_version",
+        "type",
+        "source",
+        "session",
+        "tool_call_id"
+      ]
+    },
+    "ToolResult": {
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "tool_result"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceMeta"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionMeta"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelMeta"
+        },
+        "event": {
+          "$ref": "#/$defs/EventMeta"
+        },
+        "metrics": {
+          "$ref": "#/$defs/Metrics"
+        },
+        "tool_call_id": {
+          "type": "string",
+          "title": "Tool call ID"
+        },
+        "exit_code": {
+          "type": "integer",
+          "title": "Exit code"
+        },
+        "result": {
+          "title": "Tool result"
+        }
+      },
+      "type": "object",
+      "required": [
+        "schema_version",
+        "type",
+        "source",
+        "session",
+        "tool_call_id"
+      ]
+    },
+    "Unknown": {
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "UserPrompt": {
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "user_prompt"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceMeta"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionMeta"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelMeta"
+        },
+        "event": {
+          "$ref": "#/$defs/EventMeta"
+        },
+        "metrics": {
+          "$ref": "#/$defs/Metrics"
+        },
+        "prompt_hash": {
+          "type": "string",
+          "title": "Prompt hash"
+        }
+      },
+      "type": "object",
+      "required": [
+        "schema_version",
+        "type",
+        "source",
+        "session"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/SessionStart"
+    },
+    {
+      "$ref": "#/$defs/UserPrompt"
+    },
+    {
+      "$ref": "#/$defs/AssistantMessage"
+    },
+    {
+      "$ref": "#/$defs/ToolCall"
+    },
+    {
+      "$ref": "#/$defs/ToolResult"
+    },
+    {
+      "$ref": "#/$defs/SessionEnd"
+    },
+    {
+      "$ref": "#/$defs/Unknown"
+    }
+  ],
+  "title": "proofswe NormalizedEvent v1",
+  "description": "Stable normalized event contract emitted by proofswe source adapters."
+}
