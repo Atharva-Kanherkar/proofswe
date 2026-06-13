@@ -10,9 +10,17 @@ existing benchmark can:
 > proofswe measures whether a model's work *survives* in tasks that don't.
 
 Status: **design exploration.** No collector, no binary yet. We are nailing the
-measurement methodology before writing a line of code, because the methodology
-is the hard part and the only part that decides whether this is a benchmark or
-just telemetry with a leaderboard attached. See [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
+hard parts on paper before writing a line of code:
+
+- [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) — how raw real-world sessions
+  become a statistically meaningful benchmark (survival analysis, IRT,
+  hierarchical Bradley–Terry, learning the metric weights from the OSS merge
+  oracle). This is what decides whether proofswe is a benchmark or just telemetry
+  with a leaderboard attached.
+- [`docs/CAPTURE.md`](docs/CAPTURE.md) — the data-capture pipeline architecture:
+  a Rust binary that captures Claude Code / Codex / (later) Cursor sessions
+  through a harness-agnostic narrow waist, backed by how the best Rust projects
+  (ripgrep, serde, rust-analyzer, ruff, gitoxide) actually build this.
 
 ## Why this category is empty
 
