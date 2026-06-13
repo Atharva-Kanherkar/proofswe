@@ -18,9 +18,9 @@ hard parts on paper before writing a line of code:
   oracle). This is what decides whether proofswe is a benchmark or just telemetry
   with a leaderboard attached.
 - [`docs/CAPTURE.md`](docs/CAPTURE.md) — the data-capture pipeline architecture:
-  a Rust binary that captures Claude Code / Codex / (later) Cursor sessions
-  through a harness-agnostic narrow waist, backed by how the best Rust projects
-  (ripgrep, serde, rust-analyzer, ruff, gitoxide) actually build this.
+  a Go binary that captures Claude Code / Codex / (later) Cursor sessions
+  through a harness-agnostic narrow waist, backed by how the best Go CLIs
+  (gh, hugo, fzf, GoReleaser, go-git) actually build this.
 
 ## Why this category is empty
 
