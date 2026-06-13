@@ -11,5 +11,6 @@
 *.jsonl
 
 # Build artifacts (Go binary lands here once implementation starts)
+.ci-bin/
 /dist/
 /proofswe
