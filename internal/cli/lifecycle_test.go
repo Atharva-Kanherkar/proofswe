@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -117,10 +118,15 @@ func TestRunDisableHooksDoesNotCreateMissingConfigFiles(t *testing.T) {
 
 func TestRunOffOnStatus(t *testing.T) {
 	cfg, stdout := testConfig(t)
+	configPath := filepath.Join(cfg.HomeDir, ".proofswe", "config")
+	mustWriteFile(t, configPath, []byte("# keep this\nconsent_tier=metadata\n"))
 
 	cfg.Args = []string{"off"}
 	if err := Run(context.Background(), cfg); err != nil {
 		t.Fatalf("off error = %v", err)
+	}
+	if got := string(mustReadFile(t, configPath)); !strings.Contains(got, "consent_tier=metadata") || !strings.Contains(got, "enabled=false") {
+		t.Fatalf("off config = %q, want preserved consent tier and enabled=false", got)
 	}
 	stdout.Reset()
 	cfg.Args = []string{"status"}
@@ -135,6 +141,9 @@ func TestRunOffOnStatus(t *testing.T) {
 	cfg.Args = []string{"on"}
 	if err := Run(context.Background(), cfg); err != nil {
 		t.Fatalf("on error = %v", err)
+	}
+	if got := string(mustReadFile(t, configPath)); !strings.Contains(got, "consent_tier=metadata") || !strings.Contains(got, "enabled=true") {
+		t.Fatalf("on config = %q, want preserved consent tier and enabled=true", got)
 	}
 	stdout.Reset()
 	cfg.Args = []string{"status"}
@@ -197,7 +206,30 @@ func TestHookEntrypointHonorsDoNotTrackBeforeOutput(t *testing.T) {
 
 func TestHookEntrypointHonorsRepoIgnoreBeforeOutput(t *testing.T) {
 	cfg, stdout := testConfig(t)
+	subdir := filepath.Join(cfg.WorkDir, "a", "b")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll subdir: %v", err)
+	}
+	cfg.WorkDir = subdir
 	mustWriteFile(t, filepath.Join(cfg.WorkDir, ".proofswe-ignore"), nil)
+	cfg.Args = []string{"hook", "codex", "SessionStart"}
+
+	if err := Run(context.Background(), cfg); err != nil {
+		t.Fatalf("hook error = %v", err)
+	}
+	if got := stdout.String(); got != "" {
+		t.Fatalf("stdout = %q, want empty", got)
+	}
+}
+
+func TestHookEntrypointHonorsRepoIgnoreInParentDirectory(t *testing.T) {
+	cfg, stdout := testConfig(t)
+	subdir := filepath.Join(cfg.WorkDir, "a", "b")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll subdir: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(cfg.WorkDir, ".proofswe-ignore"), nil)
+	cfg.WorkDir = subdir
 	cfg.Args = []string{"hook", "codex", "SessionStart"}
 
 	if err := Run(context.Background(), cfg); err != nil {
@@ -210,13 +242,18 @@ func TestHookEntrypointHonorsRepoIgnoreBeforeOutput(t *testing.T) {
 
 func TestHookSessionStartPrintsNoticeWhenEnabled(t *testing.T) {
 	cfg, stdout := testConfig(t)
+	var stderr bytes.Buffer
+	cfg.Stderr = &stderr
 	cfg.Args = []string{"hook", "codex", "SessionStart"}
 
 	if err := Run(context.Background(), cfg); err != nil {
 		t.Fatalf("hook error = %v", err)
 	}
-	if got, want := stdout.String(), noticeLine+"\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	if got := stdout.String(); got != "" {
+		t.Fatalf("stdout = %q, want empty", got)
+	}
+	if got, want := stderr.String(), noticeLine+"\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
 	}
 }
 
@@ -252,6 +289,50 @@ func TestClaudeSettingsRemainValidJSON(t *testing.T) {
 	}
 }
 
+func TestClaudeHookEditsPreserveTopLevelSettingsOrder(t *testing.T) {
+	cfg, _ := testConfig(t)
+	claudePath := filepath.Join(cfg.HomeDir, ".claude", "settings.json")
+	original := "{\n  \"model\": \"opus\",\n  \"theme\": \"dark\",\n  \"enabledPlugins\": [\"x\"],\n  \"statusLine\": {\"type\":\"command\",\"command\":\"echo ok\"}\n}\n"
+	mustWriteFile(t, claudePath, []byte(original))
+
+	cfg.Args = []string{"enable"}
+	if err := Run(context.Background(), cfg); err != nil {
+		t.Fatalf("enable error = %v", err)
+	}
+
+	enabled := string(mustReadFile(t, claudePath))
+	assertBefore(t, enabled, "\"model\"", "\"theme\"")
+	assertBefore(t, enabled, "\"theme\"", "\"enabledPlugins\"")
+	assertBefore(t, enabled, "\"enabledPlugins\"", "\"statusLine\"")
+	if !strings.Contains(enabled, "\"hooks\"") {
+		t.Fatalf("enabled settings missing hooks:\n%s", enabled)
+	}
+
+	cfg.Args = []string{"disable", "--hooks"}
+	if err := Run(context.Background(), cfg); err != nil {
+		t.Fatalf("disable --hooks error = %v", err)
+	}
+	if got := string(mustReadFile(t, claudePath)); got != original {
+		t.Fatalf("settings after disable =\n%s\nwant original =\n%s", got, original)
+	}
+}
+
+func TestHookCommandQuotesWindowsExecutables(t *testing.T) {
+	got := hookCommandForOS(`C:\Program Files\proofswe\proofswe.exe`, "codex", "SessionStart", "windows")
+	want := `"C:\Program Files\proofswe\proofswe.exe" hook codex SessionStart`
+	if got != want {
+		t.Fatalf("windows hook command = %q, want %q", got, want)
+	}
+
+	if runtime.GOOS != "windows" {
+		got = hookCommandForOS("/tmp/proofswe bin/proofswe", "codex", "SessionStart", "linux")
+		want = "'/tmp/proofswe bin/proofswe' hook codex SessionStart"
+		if got != want {
+			t.Fatalf("posix hook command = %q, want %q", got, want)
+		}
+	}
+}
+
 func testConfig(t *testing.T) (Config, *bytes.Buffer) {
 	t.Helper()
 
@@ -274,6 +355,16 @@ func testConfig(t *testing.T) (Config, *bytes.Buffer) {
 	}
 
 	return cfg, &stdout
+}
+
+func assertBefore(t *testing.T, text, before, after string) {
+	t.Helper()
+
+	beforeIndex := strings.Index(text, before)
+	afterIndex := strings.Index(text, after)
+	if beforeIndex < 0 || afterIndex < 0 || beforeIndex > afterIndex {
+		t.Fatalf("expected %q before %q in:\n%s", before, after, text)
+	}
 }
 
 func mustWriteFile(t *testing.T, path string, data []byte) {

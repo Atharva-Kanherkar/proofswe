@@ -14,6 +14,7 @@ var ErrUsage = errors.New("usage: proofswe <enable|disable|off|on|status|hook|ve
 type Config struct {
 	Args      []string
 	Stdout    io.Writer
+	Stderr    io.Writer
 	Version   string
 	BuildInfo *debug.BuildInfo
 	HomeDir   string
@@ -31,6 +32,9 @@ func Run(ctx context.Context, cfg Config) error {
 
 	if cfg.Stdout == nil {
 		cfg.Stdout = io.Discard
+	}
+	if cfg.Stderr == nil {
+		cfg.Stderr = io.Discard
 	}
 
 	if len(cfg.Args) == 0 {

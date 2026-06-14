@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -55,17 +56,19 @@ func disableHooks(cfg Config, args []string) error {
 }
 
 func setEnabled(cfg Config, enabled bool) error {
-	value := "enabled=false\n"
 	label := "off"
 	if enabled {
-		value = "enabled=true\n"
 		label = "on"
 	}
 
-	if err := writeFileAtomic(proofsweConfigPath(cfg), []byte(value), 0o600); err != nil {
+	data, err := updateEnabledConfig(proofsweConfigPath(cfg), enabled)
+	if err != nil {
+		return fmt.Errorf("read proofswe config: %w", err)
+	}
+	if err := writeFileAtomic(proofsweConfigPath(cfg), data, 0o600); err != nil {
 		return fmt.Errorf("write proofswe config: %w", err)
 	}
-	_, err := fmt.Fprintf(cfg.Stdout, "proofswe %s\n", label)
+	_, err = fmt.Fprintf(cfg.Stdout, "proofswe %s\n", label)
 	return err
 }
 
@@ -92,7 +95,7 @@ func runHook(ctx context.Context, cfg Config, args []string) error {
 	}
 
 	if args[1] == "SessionStart" {
-		_, err := fmt.Fprintln(cfg.Stdout, noticeLine)
+		_, err := fmt.Fprintln(cfg.Stderr, noticeLine)
 		return err
 	}
 
@@ -170,6 +173,55 @@ func readEnabled(cfg Config) (bool, error) {
 	return true, nil
 }
 
+func updateEnabledConfig(path string, enabled bool) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		if enabled {
+			return []byte("enabled=true\n"), nil
+		}
+		return []byte("enabled=false\n"), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	value := "enabled=false"
+	if enabled {
+		value = "enabled=true"
+	}
+
+	lines := strings.SplitAfter(string(data), "\n")
+	replaced := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		key, _, ok := strings.Cut(trimmed, "=")
+		if !ok || strings.TrimSpace(key) != "enabled" {
+			continue
+		}
+
+		lineEnding := ""
+		if strings.HasSuffix(line, "\n") {
+			lineEnding = "\n"
+		}
+		lines[i] = value + lineEnding
+		replaced = true
+		break
+	}
+
+	text := strings.Join(lines, "")
+	if !replaced {
+		if text != "" && !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		text += value + "\n"
+	}
+
+	return []byte(text), nil
+}
+
 func repoIgnored(workDir string) (bool, error) {
 	if workDir == "" {
 		var err error
@@ -179,31 +231,42 @@ func repoIgnored(workDir string) (bool, error) {
 		}
 	}
 
-	info, err := os.Stat(filepath.Join(workDir, ".proofswe-ignore"))
-	if os.IsNotExist(err) {
-		return false, nil
+	for {
+		info, err := os.Stat(filepath.Join(workDir, ".proofswe-ignore"))
+		if err == nil {
+			return !info.IsDir(), nil
+		}
+		if !os.IsNotExist(err) {
+			return false, err
+		}
+
+		parent := filepath.Dir(workDir)
+		if parent == workDir {
+			return false, nil
+		}
+		workDir = parent
 	}
-	if err != nil {
-		return false, err
-	}
-	return !info.IsDir(), nil
 }
 
 func upsertClaudeHooks(path, exePath string) error {
-	settings, err := readJSONObject(path)
-	if err != nil {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		data = nil
+	} else if err != nil {
 		return err
 	}
 
-	hooks := objectAt(settings, "hooks")
+	hooks, err := claudeHooksObject(data)
+	if err != nil {
+		return err
+	}
 	for _, event := range claudeHookEvents {
 		groups := filterTaggedGroups(arrayAt(hooks, event))
 		groups = append(groups, hookGroup(event, "claudecode", exePath))
 		hooks[event] = groups
 	}
-	settings["hooks"] = hooks
 
-	return writeJSONFile(path, settings)
+	return writeFileAtomic(path, replaceClaudeHooks(data, hooks), 0o600)
 }
 
 func removeClaudeHooks(path string) error {
@@ -213,14 +276,14 @@ func removeClaudeHooks(path string) error {
 		return err
 	}
 
-	settings, err := readJSONObject(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 
-	rawHooks, ok := settings["hooks"].(map[string]any)
-	if !ok {
-		return nil
+	rawHooks, err := claudeHooksObject(data)
+	if err != nil {
+		return err
 	}
 
 	for _, event := range claudeHookEvents {
@@ -232,10 +295,14 @@ func removeClaudeHooks(path string) error {
 		}
 	}
 	if len(rawHooks) == 0 {
-		delete(settings, "hooks")
+		next, err := removeClaudeHooksProperty(data)
+		if err != nil {
+			return err
+		}
+		return writeFileAtomic(path, next, 0o600)
 	}
 
-	return writeJSONFile(path, settings)
+	return writeFileAtomic(path, replaceClaudeHooks(data, rawHooks), 0o600)
 }
 
 func claudeHooksWired(path string) (bool, error) {
@@ -298,6 +365,270 @@ func codexHooksWired(path string) (bool, error) {
 	return strings.Contains(text, codexBlockStart) && strings.Contains(text, codexBlockEnd), nil
 }
 
+func claudeHooksObject(data []byte) (map[string]any, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return map[string]any{}, nil
+	}
+
+	prop, ok, err := findTopLevelJSONProperty(data, "hooks")
+	if err != nil || !ok {
+		return map[string]any{}, err
+	}
+
+	var hooks map[string]any
+	if err := json.Unmarshal(data[prop.valueStart:prop.valueEnd], &hooks); err != nil {
+		return nil, err
+	}
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	return hooks, nil
+}
+
+func replaceClaudeHooks(data []byte, hooks map[string]any) []byte {
+	rawHooks := mustMarshalIndented(hooks)
+	if len(bytes.TrimSpace(data)) == 0 {
+		return []byte("{\n  \"hooks\": " + indentContinuation(string(rawHooks), "  ") + "\n}\n")
+	}
+
+	prop, ok, err := findTopLevelJSONProperty(data, "hooks")
+	if err == nil && ok {
+		next := make([]byte, 0, len(data)-prop.valueEnd+prop.valueStart+len(rawHooks))
+		next = append(next, data[:prop.valueStart]...)
+		next = append(next, rawHooks...)
+		next = append(next, data[prop.valueEnd:]...)
+		return next
+	}
+
+	insertAt := lastNonSpaceIndex(data)
+	if insertAt < 0 || data[insertAt] != '}' {
+		return []byte("{\n  \"hooks\": " + indentContinuation(string(rawHooks), "  ") + "\n}\n")
+	}
+
+	prefix := ",\n  \"hooks\": "
+	if strings.TrimSpace(string(data[:insertAt])) == "{" {
+		prefix = "\n  \"hooks\": "
+	}
+
+	next := make([]byte, 0, len(data)+len(prefix)+len(rawHooks)+2)
+	next = append(next, data[:insertAt]...)
+	next = append(next, prefix...)
+	next = append(next, []byte(indentContinuation(string(rawHooks), "  "))...)
+	next = append(next, '\n')
+	next = append(next, data[insertAt:]...)
+	return next
+}
+
+func removeClaudeHooksProperty(data []byte) ([]byte, error) {
+	prop, ok, err := findTopLevelJSONProperty(data, "hooks")
+	if err != nil || !ok {
+		return data, err
+	}
+
+	next := make([]byte, 0, len(data)-(prop.memberEnd-prop.memberStart))
+	next = append(next, data[:prop.memberStart]...)
+	next = append(next, data[prop.memberEnd:]...)
+	return next, nil
+}
+
+func mustMarshalIndented(value any) []byte {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+func indentContinuation(text, indent string) string {
+	return strings.ReplaceAll(text, "\n", "\n"+indent)
+}
+
+type jsonProperty struct {
+	valueStart  int
+	valueEnd    int
+	memberStart int
+	memberEnd   int
+}
+
+func findTopLevelJSONProperty(data []byte, key string) (jsonProperty, bool, error) {
+	if !json.Valid(data) {
+		return jsonProperty{}, false, fmt.Errorf("invalid JSON")
+	}
+
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' || jsonDepthAt(data, i) != 1 {
+			continue
+		}
+
+		keyEnd, err := jsonStringEnd(data, i)
+		if err != nil {
+			return jsonProperty{}, false, err
+		}
+
+		var decodedKey string
+		if err := json.Unmarshal(data[i:keyEnd], &decodedKey); err != nil {
+			return jsonProperty{}, false, err
+		}
+
+		colon := skipJSONSpace(data, keyEnd)
+		if colon >= len(data) || data[colon] != ':' {
+			i = keyEnd - 1
+			continue
+		}
+
+		valueStart := skipJSONSpace(data, colon+1)
+		valueEnd, err := jsonValueEnd(data, valueStart)
+		if err != nil {
+			return jsonProperty{}, false, err
+		}
+
+		if decodedKey == key {
+			memberStart := i
+			for j := i - 1; j >= 0; j-- {
+				if isJSONSpace(data[j]) {
+					continue
+				}
+				if data[j] == ',' {
+					memberStart = j
+				}
+				break
+			}
+
+			memberEnd := valueEnd
+			next := skipJSONSpace(data, memberEnd)
+			if memberStart == i && next < len(data) && data[next] == ',' {
+				memberEnd = next + 1
+				if memberEnd < len(data) && data[memberEnd] == '\n' {
+					memberEnd++
+				}
+			}
+
+			return jsonProperty{
+				valueStart:  valueStart,
+				valueEnd:    valueEnd,
+				memberStart: memberStart,
+				memberEnd:   memberEnd,
+			}, true, nil
+		}
+
+		i = valueEnd - 1
+	}
+
+	return jsonProperty{}, false, nil
+}
+
+func jsonDepthAt(data []byte, pos int) int {
+	depth := 0
+	inString := false
+	escaped := false
+	for i := 0; i < pos; i++ {
+		c := data[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+		}
+	}
+	return depth
+}
+
+func jsonStringEnd(data []byte, start int) (int, error) {
+	escaped := false
+	for i := start + 1; i < len(data); i++ {
+		c := data[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			return i + 1, nil
+		}
+	}
+	return 0, fmt.Errorf("unterminated JSON string")
+}
+
+func jsonValueEnd(data []byte, start int) (int, error) {
+	if start >= len(data) {
+		return 0, fmt.Errorf("missing JSON value")
+	}
+	if data[start] == '"' {
+		return jsonStringEnd(data, start)
+	}
+
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(data); i++ {
+		c := data[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if depth == 0 {
+				return i, nil
+			}
+			depth--
+		case ',':
+			if depth == 0 {
+				return i, nil
+			}
+		}
+	}
+
+	return len(data), nil
+}
+
+func skipJSONSpace(data []byte, start int) int {
+	for start < len(data) && isJSONSpace(data[start]) {
+		start++
+	}
+	return start
+}
+
+func isJSONSpace(b byte) bool {
+	return b == ' ' || b == '\n' || b == '\r' || b == '\t'
+}
+
+func lastNonSpaceIndex(data []byte) int {
+	for i := len(data) - 1; i >= 0; i-- {
+		if !isJSONSpace(data[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
 func readJSONObject(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -318,24 +649,6 @@ func readJSONObject(path string) (map[string]any, error) {
 		decoded = map[string]any{}
 	}
 	return decoded, nil
-}
-
-func writeJSONFile(path string, value map[string]any) error {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	return writeFileAtomic(path, data, 0o600)
-}
-
-func objectAt(parent map[string]any, key string) map[string]any {
-	if child, ok := parent[key].(map[string]any); ok {
-		return child
-	}
-	child := map[string]any{}
-	parent[key] = child
-	return child
 }
 
 func arrayAt(parent map[string]any, key string) []any {
@@ -445,14 +758,27 @@ func matcherFor(event string) string {
 }
 
 func hookCommand(exePath, harness, event string) string {
-	return shellQuote(exePath) + " hook " + shellQuote(harness) + " " + shellQuote(event)
+	return hookCommandForOS(exePath, harness, event, runtime.GOOS)
 }
 
-func shellQuote(s string) string {
+func hookCommandForOS(exePath, harness, event, goos string) string {
+	return shellQuoteForOS(exePath, goos) + " hook " + shellQuoteForOS(harness, goos) + " " + shellQuoteForOS(event, goos)
+}
+
+func shellQuoteForOS(s, goos string) string {
 	if s == "" {
 		return "proofswe"
 	}
-	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+	if goos == "windows" {
+		if !strings.ContainsAny(s, " \t\n\"&|<>^") {
+			return s
+		}
+		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	}
+	if strings.ContainsAny(s, " \t\n'\"\\$`!#&;()<>|*?[]{}") {
+		return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+	}
+	return s
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
