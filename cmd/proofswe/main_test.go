@@ -11,7 +11,7 @@ func TestRunVersion(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	err := run(context.Background(), []string{"version"}, &stdout, &stderr)
+	err := run(context.Background(), []string{"version"}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -25,7 +25,7 @@ func TestRunDropsGoRunSeparator(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	err := run(context.Background(), []string{"--", "status"}, &stdout, &stderr)
+	err := run(context.Background(), []string{"--", "status"}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}

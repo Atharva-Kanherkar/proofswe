@@ -19,7 +19,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		if errors.Is(err, cli.ErrUsage) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
@@ -30,13 +30,14 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
 
 	return cli.Run(ctx, cli.Config{
 		Args:      args,
+		Stdin:     stdin,
 		Stdout:    stdout,
 		Stderr:    stderr,
 		Version:   version,

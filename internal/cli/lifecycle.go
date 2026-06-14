@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const (
@@ -94,9 +95,23 @@ func runHook(ctx context.Context, cfg Config, args []string) error {
 	default:
 	}
 
-	if args[1] == "SessionStart" {
+	switch args[1] {
+	case "SessionStart":
 		_, err := fmt.Fprintln(cfg.Stderr, noticeLine)
 		return err
+	case "SessionEnd", "Stop":
+		// Codex fires Stop per turn (no SessionEnd); the record is idempotent, so
+		// each fire overwrites with the session's current cumulative diff.
+		in, parseErr := parseHookInput(cfg.Stdin)
+		if parseErr != nil {
+			_, _ = fmt.Fprintf(cfg.Stderr, "proofswe: snapshot skipped (bad hook input): %v\n", parseErr)
+			return nil
+		}
+		if snapErr := snapshot(cfg, args[0], in, time.Now()); snapErr != nil {
+			// Best-effort: capture failures must never disrupt the user's session.
+			_, _ = fmt.Fprintf(cfg.Stderr, "proofswe: snapshot skipped: %v\n", snapErr)
+		}
+		return nil
 	}
 
 	return nil
