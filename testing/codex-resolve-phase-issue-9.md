@@ -8,8 +8,8 @@ schema-versioned datapoints.
 - `proofswe resolve` scans `~/.proofswe/pending/*.json` and resolves records older
   than the maturity window. The default maturity window is 24h.
 - A configurable maturity window is available for tests and command-line use.
-- Hook `SessionStart` runs the same resolve path after the kill-switch check and
-  before printing the local notice.
+- Hook `SessionStart` prints the local notice after the kill-switch check, then
+  runs the same best-effort resolve path.
 - A pending record younger than the maturity window is left untouched and emits
   no datapoint.
 - A matured pending record re-reads only the original repo-relative file paths
