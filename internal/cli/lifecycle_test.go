@@ -97,6 +97,24 @@ func TestRunDisableRequiresHooksFlag(t *testing.T) {
 	}
 }
 
+func TestRunDisableHooksDoesNotCreateMissingConfigFiles(t *testing.T) {
+	cfg, _ := testConfig(t)
+	claudePath := filepath.Join(cfg.HomeDir, ".claude", "settings.json")
+	codexPath := filepath.Join(cfg.HomeDir, ".codex", "config.toml")
+	cfg.Args = []string{"disable", "--hooks"}
+
+	if err := Run(context.Background(), cfg); err != nil {
+		t.Fatalf("disable --hooks error = %v", err)
+	}
+
+	if _, err := os.Stat(claudePath); !os.IsNotExist(err) {
+		t.Fatalf("claude settings stat error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(codexPath); !os.IsNotExist(err) {
+		t.Fatalf("codex config stat error = %v, want not exist", err)
+	}
+}
+
 func TestRunOffOnStatus(t *testing.T) {
 	cfg, stdout := testConfig(t)
 

@@ -206,10 +206,13 @@ func upsertClaudeHooks(path, exePath string) error {
 }
 
 func removeClaudeHooks(path string) error {
-	settings, err := readJSONObject(path)
-	if os.IsNotExist(err) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
+	} else if err != nil {
+		return err
 	}
+
+	settings, err := readJSONObject(path)
 	if err != nil {
 		return err
 	}
@@ -409,22 +412,24 @@ func codexHookBlock(exePath string) string {
 }
 
 func removeCodexBlock(text string) string {
-	start := strings.Index(text, codexBlockStart)
-	if start < 0 {
-		return text
+	for {
+		start := strings.Index(text, codexBlockStart)
+		if start < 0 {
+			return text
+		}
+		end := strings.Index(text[start:], codexBlockEnd)
+		if end < 0 {
+			return text
+		}
+		end += start + len(codexBlockEnd)
+		if end < len(text) && text[end] == '\n' {
+			end++
+		}
+		if start > 0 && text[start-1] == '\n' && end < len(text) && text[end] == '\n' {
+			end++
+		}
+		text = text[:start] + text[end:]
 	}
-	end := strings.Index(text[start:], codexBlockEnd)
-	if end < 0 {
-		return text
-	}
-	end += start + len(codexBlockEnd)
-	if end < len(text) && text[end] == '\n' {
-		end++
-	}
-	if start > 0 && text[start-1] == '\n' && end < len(text) && text[end] == '\n' {
-		end++
-	}
-	return text[:start] + text[end:]
 }
 
 func matcherFor(event string) string {
