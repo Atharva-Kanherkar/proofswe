@@ -1,7 +1,6 @@
 package claudecode
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,8 +21,9 @@ import (
 const Harness core.HarnessName = "claudecode"
 
 type Adapter struct {
-	Root   string
-	Logger *slog.Logger
+	Root     string
+	StateDir string
+	Logger   *slog.Logger
 }
 
 type Transcript struct {
@@ -44,12 +44,27 @@ func (a Adapter) root() string {
 	return DefaultRoot()
 }
 
+func (a Adapter) stateDir() string {
+	if a.StateDir != "" {
+		return a.StateDir
+	}
+	return DefaultStateDir()
+}
+
 func DefaultRoot() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
 	return filepath.Join(home, ".claude")
+}
+
+func DefaultStateDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".proofswe")
 }
 
 func (a Adapter) Detect() error {
@@ -67,6 +82,10 @@ func (a Adapter) Detect() error {
 	return nil
 }
 
+// Enable / Disable are intentionally no-ops here: writing the sentinel-tagged
+// SessionStart/Stop hooks into ~/.claude/settings.json (and the kill-switch that
+// guards them) is owned by the cli hook layer, which sequences registration across
+// every adapter. This adapter only discovers and parses transcripts.
 func (a Adapter) Enable() error {
 	return nil
 }
@@ -77,6 +96,15 @@ func (a Adapter) Disable() error {
 
 func (a Adapter) Capture(core.CaptureTrigger) iter.Seq[core.NormalizedEvent] {
 	return func(yield func(core.NormalizedEvent) bool) {
+		// Fail closed: a missing salt must never downgrade us to unsalted hashes.
+		salt, err := loadOrCreateSalt(a.stateDir())
+		if err != nil {
+			if a.Logger != nil {
+				a.Logger.Warn("load proofswe hash salt", "error", err)
+			}
+			return
+		}
+
 		transcripts, err := Discover(a.root())
 		if err != nil {
 			if a.Logger != nil {
@@ -86,7 +114,7 @@ func (a Adapter) Capture(core.CaptureTrigger) iter.Seq[core.NormalizedEvent] {
 		}
 
 		for _, transcript := range transcripts {
-			if !captureTranscript(transcript, a.Logger, yield) {
+			if !captureTranscript(transcript, salt, a.stateDir(), a.Logger, yield) {
 				return
 			}
 		}
@@ -114,19 +142,29 @@ func Discover(root string) ([]Transcript, error) {
 		}
 		projectSlug := entry.Name()
 		projectDir := filepath.Join(projectsDir, projectSlug)
-		files, err := filepath.Glob(filepath.Join(projectDir, "*.jsonl"))
-		if err != nil {
-			return nil, core.NewError(core.ErrorKindAdapter, "glob claude code transcripts", err)
-		}
-		sort.Strings(files)
-		for _, path := range files {
+		repoPath := ProjectSlugToRepoPath(projectSlug)
+
+		// Main transcripts live at <slug>/<session>.jsonl, but subagent and
+		// workflow transcripts are nested deeper under <session>/subagents/…;
+		// walk the whole subtree so the bulk of sessions is not silently skipped.
+		walkErr := filepath.WalkDir(projectDir, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() || filepath.Ext(path) != ".jsonl" {
+				return nil
+			}
 			sessionID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			transcripts = append(transcripts, Transcript{
 				Path:        path,
 				ProjectSlug: projectSlug,
-				RepoPath:    transcriptRepoPath(path, projectSlug),
+				RepoPath:    repoPath,
 				SessionID:   core.SessionId(sessionID),
 			})
+			return nil
+		})
+		if walkErr != nil {
+			return nil, core.NewError(core.ErrorKindAdapter, "walk claude code transcripts", walkErr)
 		}
 	}
 
@@ -136,6 +174,10 @@ func Discover(root string) ([]Transcript, error) {
 	return transcripts, nil
 }
 
+// ProjectSlugToRepoPath best-effort decodes Claude Code's project slug back to a
+// filesystem path. It is lossy (slugs replace every path separator with '-', so a
+// repo whose own name contains '-' cannot be recovered exactly); the authoritative
+// working directory is carried per-event in session.cwd.
 func ProjectSlugToRepoPath(slug string) string {
 	if slug == "" {
 		return ""
@@ -147,29 +189,13 @@ func ProjectSlugToRepoPath(slug string) string {
 	return string(filepath.Separator) + filepath.FromSlash(strings.ReplaceAll(trimmed, "-", "/"))
 }
 
-func transcriptRepoPath(path string, projectSlug string) string {
-	file, err := os.Open(path)
-	if err != nil {
-		return ProjectSlugToRepoPath(projectSlug)
-	}
-	defer func() {
-		_ = file.Close()
-	}()
-
-	line, err := bufio.NewReader(file).ReadBytes('\n')
-	if err != nil && len(line) == 0 {
-		return ProjectSlugToRepoPath(projectSlug)
-	}
-	var probe struct {
-		CWD string `json:"cwd"`
-	}
-	if err := json.Unmarshal(line, &probe); err != nil || probe.CWD == "" {
-		return ProjectSlugToRepoPath(projectSlug)
-	}
-	return filepath.Clean(probe.CWD)
+// cursorPath maps a transcript path to its resume-cursor file under the state dir.
+func cursorPath(stateDir, transcriptPath string) string {
+	sum := sha256.Sum256([]byte(transcriptPath))
+	return filepath.Join(stateDir, "cursors", hex.EncodeToString(sum[:])+".cursor")
 }
 
-func ParseFile(path string) ([]core.NormalizedEvent, error) {
+func ParseFile(salt []byte, path string) ([]core.NormalizedEvent, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, core.NewError(core.ErrorKindAdapter, "open claude code transcript", err)
@@ -178,12 +204,13 @@ func ParseFile(path string) ([]core.NormalizedEvent, error) {
 	var events []core.NormalizedEvent
 	turnIndex := 0
 	_, err = reader.ReadNewLines(file, 0, reader.Options{}, func(line []byte, _ int64) error {
-		normalized, err := ParseRaw(line, path, turnIndex)
-		if err != nil {
-			return err
+		normalized, parseErr := ParseRaw(salt, line, path, turnIndex)
+		turnIndex++
+		if parseErr != nil {
+			// Lenient, like the reader: skip a malformed record and keep going.
+			return nil
 		}
 		events = append(events, normalized...)
-		turnIndex++
 		return nil
 	})
 	if err != nil {
@@ -196,15 +223,15 @@ func ParseFile(path string) ([]core.NormalizedEvent, error) {
 	return events, nil
 }
 
-func ParseRaw(data []byte, path string, turnIndex int) ([]core.NormalizedEvent, error) {
+func ParseRaw(salt []byte, data []byte, path string, turnIndex int) ([]core.NormalizedEvent, error) {
 	var raw RawEvent
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, core.NewError(core.ErrorKindInvalidEvent, "decode claude code record", err)
 	}
-	return raw.Normalized(path, turnIndex)
+	return raw.Normalized(newHasher(salt), path, turnIndex)
 }
 
-func captureTranscript(transcript Transcript, logger *slog.Logger, yield func(core.NormalizedEvent) bool) bool {
+func captureTranscript(transcript Transcript, salt []byte, stateDir string, logger *slog.Logger, yield func(core.NormalizedEvent) bool) bool {
 	file, err := os.Open(transcript.Path)
 	if err != nil {
 		if logger != nil {
@@ -218,13 +245,28 @@ func captureTranscript(transcript Transcript, logger *slog.Logger, yield func(co
 		}
 	}()
 
-	turnIndex := 0
-	_, err = reader.ReadNewLines(file, 0, reader.Options{Logger: logger}, func(line []byte, _ int64) error {
-		events, err := ParseRaw(line, transcript.Path, turnIndex)
-		if err != nil {
-			return err
+	cursorFile := cursorPath(stateDir, transcript.Path)
+	cursor, err := reader.LoadCursor(cursorFile)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("load transcript cursor", "path", transcript.Path, "error", err)
 		}
+		cursor = 0
+	}
+
+	// turnIndex is the ordinal of a record within this capture pass over the new
+	// bytes; events are keyed downstream by event.id (the record uuid), so the
+	// index only needs to order events seen together, not survive across passes.
+	turnIndex := 0
+	stats, err := reader.ReadNewLines(file, cursor, reader.Options{Logger: logger}, func(line []byte, _ int64) error {
+		events, parseErr := ParseRaw(salt, line, transcript.Path, turnIndex)
 		turnIndex++
+		if parseErr != nil {
+			if logger != nil {
+				logger.Warn("skip malformed claude code record", "path", transcript.Path, "error", parseErr)
+			}
+			return nil
+		}
 		for _, event := range events {
 			if !yield(event) {
 				return errStopCapture
@@ -232,10 +274,17 @@ func captureTranscript(transcript Transcript, logger *slog.Logger, yield func(co
 		}
 		return nil
 	})
-	if err != nil && logger != nil && !errors.Is(err, errStopCapture) {
+	if errors.Is(err, errStopCapture) {
+		// Consumer stopped early; do not advance the cursor so nothing is skipped.
+		return false
+	}
+	if err != nil && logger != nil {
 		logger.Warn("read claude code transcript", "path", transcript.Path, "error", err)
 	}
-	return !errors.Is(err, errStopCapture)
+	if saveErr := reader.SaveCursor(cursorFile, stats.Cursor); saveErr != nil && logger != nil {
+		logger.Warn("save transcript cursor", "path", transcript.Path, "error", saveErr)
+	}
+	return true
 }
 
 var errStopCapture = fmt.Errorf("stop claude code capture")
@@ -266,20 +315,4 @@ func envelope(common rawCommon, eventType core.EventType, path string, turnIndex
 			IsSubagent: common.IsSidechain,
 		},
 	}
-}
-
-func hashRaw(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
-		return ""
-	}
-	sum := sha256.Sum256(raw)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func hashString(value string) string {
-	if value == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(value))
-	return "sha256:" + hex.EncodeToString(sum[:])
 }

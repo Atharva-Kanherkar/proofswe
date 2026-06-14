@@ -10,10 +10,8 @@ import (
 
 type RawEvent struct {
 	Type string
-	Raw  json.RawMessage
 
 	started   *rawCommon
-	system    *rawCommon
 	user      *rawUser
 	assistant *rawAssistant
 	result    *rawResult
@@ -36,7 +34,6 @@ type rawUser struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
-	ToolUseResult json.RawMessage `json:"toolUseResult"`
 }
 
 type rawAssistant struct {
@@ -86,13 +83,14 @@ func (e *RawEvent) UnmarshalJSON(data []byte) error {
 	}
 
 	e.Type = probe.Type
-	e.Raw = append(e.Raw[:0], data...)
 	e.started = nil
-	e.system = nil
 	e.user = nil
 	e.assistant = nil
 	e.result = nil
 
+	// Only the records that carry agent work are modeled; everything else
+	// (system, last-prompt, pr-link, attachment, …) falls through to core.Unknown
+	// so the waist stays small and old binaries survive new record types.
 	switch probe.Type {
 	case "started":
 		var event rawCommon
@@ -100,12 +98,6 @@ func (e *RawEvent) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		e.started = &event
-	case "system":
-		var event rawCommon
-		if err := json.Unmarshal(data, &event); err != nil {
-			return err
-		}
-		e.system = &event
 	case "user":
 		var event rawUser
 		if err := json.Unmarshal(data, &event); err != nil {
@@ -129,16 +121,14 @@ func (e *RawEvent) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (e RawEvent) Normalized(path string, turnIndex int) ([]core.NormalizedEvent, error) {
+func (e RawEvent) Normalized(h hasher, path string, turnIndex int) ([]core.NormalizedEvent, error) {
 	switch {
 	case e.started != nil:
 		return []core.NormalizedEvent{&core.SessionStart{Envelope: envelope(*e.started, core.EventTypeSessionStart, path, turnIndex)}}, nil
-	case e.system != nil:
-		return []core.NormalizedEvent{&core.SessionStart{Envelope: envelope(*e.system, core.EventTypeSessionStart, path, turnIndex)}}, nil
 	case e.user != nil:
-		return normalizeUser(*e.user, path, turnIndex), nil
+		return normalizeUser(h, *e.user, path, turnIndex), nil
 	case e.assistant != nil:
-		return normalizeAssistant(*e.assistant, path, turnIndex), nil
+		return normalizeAssistant(h, *e.assistant, path, turnIndex), nil
 	case e.result != nil:
 		event := &core.SessionEnd{Envelope: envelope(e.result.rawCommon, core.EventTypeSessionEnd, path, turnIndex), Reason: e.result.Subtype}
 		return []core.NormalizedEvent{event}, nil
@@ -147,10 +137,10 @@ func (e RawEvent) Normalized(path string, turnIndex int) ([]core.NormalizedEvent
 	}
 }
 
-func normalizeUser(raw rawUser, path string, turnIndex int) []core.NormalizedEvent {
+func normalizeUser(h hasher, raw rawUser, path string, turnIndex int) []core.NormalizedEvent {
 	blocks := decodeContentBlocks(raw.Message.Content)
 	if len(blocks) == 0 {
-		hash := hashRaw(raw.Message.Content)
+		hash := h.rawHash(raw.Message.Content)
 		if hash == "" {
 			return nil
 		}
@@ -158,6 +148,12 @@ func normalizeUser(raw rawUser, path string, turnIndex int) []core.NormalizedEve
 	}
 
 	var events []core.NormalizedEvent
+	// A user record is usually either a typed prompt or a batch of tool results,
+	// but it can carry both; capture the text blocks as a prompt instead of
+	// dropping array-form prompts on the floor.
+	if promptHash := userPromptHash(h, blocks); promptHash != "" {
+		events = append(events, &core.UserPrompt{Envelope: envelope(raw.rawCommon, core.EventTypeUserPrompt, path, turnIndex), PromptHash: promptHash})
+	}
 	for _, block := range blocks {
 		if block.Type != "tool_result" {
 			continue
@@ -165,14 +161,13 @@ func normalizeUser(raw rawUser, path string, turnIndex int) []core.NormalizedEve
 		events = append(events, &core.ToolResult{
 			Envelope:   envelope(raw.rawCommon, core.EventTypeToolResult, path, turnIndex),
 			ToolCallID: core.ToolCallId(block.ToolUseID),
-			ExitCode:   exitCodeFromError(block.IsError),
-			Result:     sanitizedToolResult(block),
+			Result:     sanitizedToolResult(h, block),
 		})
 	}
 	return events
 }
 
-func normalizeAssistant(raw rawAssistant, path string, turnIndex int) []core.NormalizedEvent {
+func normalizeAssistant(h hasher, raw rawAssistant, path string, turnIndex int) []core.NormalizedEvent {
 	base := envelope(raw.rawCommon, core.EventTypeAssistantMessage, path, turnIndex)
 	base.Model.ID = core.ModelId(raw.Message.Model)
 	base.Metrics = core.Metrics{
@@ -184,8 +179,14 @@ func normalizeAssistant(raw rawAssistant, path string, turnIndex int) []core.Nor
 
 	blocks := decodeContentBlocks(raw.Message.Content)
 	var events []core.NormalizedEvent
-	if messageHash := assistantMessageHash(blocks, raw.Message.Content); messageHash != "" {
+
+	// Token usage is reported once per assistant turn. Attach it to the first
+	// event emitted for the turn and zero it on the rest so a per-model token
+	// aggregate does not multiply by the number of tool calls in the turn.
+	metricsPlaced := false
+	if messageHash := assistantMessageHash(h, blocks, raw.Message.Content); messageHash != "" {
 		events = append(events, &core.AssistantMessage{Envelope: base, MessageHash: messageHash})
+		metricsPlaced = true
 	}
 	for _, block := range blocks {
 		if block.Type != "tool_use" {
@@ -193,11 +194,16 @@ func normalizeAssistant(raw rawAssistant, path string, turnIndex int) []core.Nor
 		}
 		callEnvelope := base
 		callEnvelope.Type = core.EventTypeToolCall
+		if metricsPlaced {
+			callEnvelope.Metrics = core.Metrics{}
+		} else {
+			metricsPlaced = true
+		}
 		events = append(events, &core.ToolCall{
 			Envelope:   callEnvelope,
 			ToolCallID: core.ToolCallId(block.ID),
 			Name:       block.Name,
-			Arguments:  sanitizedToolInput(block.Input),
+			Arguments:  sanitizedToolInput(h, block.Input),
 		})
 	}
 	return events
@@ -214,37 +220,41 @@ func decodeContentBlocks(raw json.RawMessage) []contentBlock {
 	return nil
 }
 
-func assistantMessageHash(blocks []contentBlock, raw json.RawMessage) string {
+func userPromptHash(h hasher, blocks []contentBlock) string {
+	return joinedTextHash(h, blocks)
+}
+
+func assistantMessageHash(h hasher, blocks []contentBlock, raw json.RawMessage) string {
 	if len(blocks) == 0 {
-		return hashRaw(raw)
+		return h.rawHash(raw)
 	}
+	return joinedTextHash(h, blocks)
+}
+
+// joinedTextHash hashes each text block independently, then hashes the ordered
+// list of those hashes. Per-block hashing keeps the door open to line-level
+// survival matching later without re-hashing raw content.
+func joinedTextHash(h hasher, blocks []contentBlock) string {
 	var hashes []string
 	for _, block := range blocks {
-		switch block.Type {
-		case "text":
-			if block.Text != "" {
-				hashes = append(hashes, hashString(block.Text))
-			}
-		case "thinking":
-			if block.Text != "" {
-				hashes = append(hashes, hashString(block.Text))
-			}
+		if block.Type == "text" && block.Text != "" {
+			hashes = append(hashes, h.stringHash(block.Text))
 		}
 	}
 	if len(hashes) == 0 {
 		return ""
 	}
 	joined, _ := json.Marshal(hashes)
-	return hashRaw(joined)
+	return h.rawHash(joined)
 }
 
-func sanitizedToolInput(raw json.RawMessage) map[string]any {
+func sanitizedToolInput(h hasher, raw json.RawMessage) map[string]any {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
 	var input map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &input); err != nil {
-		return map[string]any{"input_hash": hashRaw(raw)}
+		return map[string]any{"input_hash": h.rawHash(raw)}
 	}
 	keys := make([]string, 0, len(input))
 	for key := range input {
@@ -252,14 +262,14 @@ func sanitizedToolInput(raw json.RawMessage) map[string]any {
 	}
 	sort.Strings(keys)
 	return map[string]any{
-		"input_hash": hashRaw(raw),
+		"input_hash": h.rawHash(raw),
 		"input_keys": keys,
 	}
 }
 
-func sanitizedToolResult(block contentBlock) json.RawMessage {
+func sanitizedToolResult(h hasher, block contentBlock) json.RawMessage {
 	payload := map[string]any{
-		"content_hash": hashRaw(block.Content),
+		"content_hash": h.rawHash(block.Content),
 		"content_type": contentJSONType(block.Content),
 	}
 	if block.IsError != nil {
@@ -274,17 +284,6 @@ func sanitizedUnknown(eventType string) json.RawMessage {
 		Type string `json:"type"`
 	}{Type: eventType})
 	return data
-}
-
-func exitCodeFromError(isError *bool) *int {
-	if isError == nil {
-		return nil
-	}
-	code := 0
-	if *isError {
-		code = 1
-	}
-	return &code
 }
 
 func contentJSONType(raw json.RawMessage) string {
