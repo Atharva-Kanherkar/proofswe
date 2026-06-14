@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/hashing"
@@ -24,6 +25,8 @@ const (
 	defaultResolveMaturity = 24 * time.Hour
 	hookResolveLimit       = 8
 )
+
+var resolvingClaimCounter atomic.Uint64
 
 // ResolvedDatapoint is the append-only data.jsonl record emitted when a pending
 // snapshot matures. It intentionally contains no raw paths or code content.
@@ -158,7 +161,7 @@ func resolvePendingFile(cfg Config, h hashing.Hasher, path string, now time.Time
 }
 
 func claimPendingFile(path string, now time.Time) (string, bool, error) {
-	claimed := path + ".resolving-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(now.UnixNano(), 10)
+	claimed := path + ".resolving-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(now.UnixNano(), 10) + "-" + strconv.FormatUint(resolvingClaimCounter.Add(1), 10)
 	if err := os.Rename(path, claimed); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", false, nil
