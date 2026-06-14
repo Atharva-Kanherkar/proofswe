@@ -234,10 +234,14 @@ func TestHookStopTriggersSnapshotFromStdin(t *testing.T) {
 	home := t.TempDir()
 	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nHOOKLINE\n")
 
-	stdin := `{"session_id":"hooked","cwd":"` + repo + `","transcript_path":""}`
+	// Marshal so a Windows repo path's backslashes are JSON-escaped correctly.
+	stdin, err := json.Marshal(map[string]string{"session_id": "hooked", "cwd": repo, "transcript_path": ""})
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := Config{
 		Args:    []string{"hook", "codex", "Stop"},
-		Stdin:   strings.NewReader(stdin),
+		Stdin:   strings.NewReader(string(stdin)),
 		Stdout:  io.Discard,
 		Stderr:  io.Discard,
 		HomeDir: home,
