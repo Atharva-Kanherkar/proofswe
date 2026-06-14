@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -454,8 +455,12 @@ func TestLoadOrCreateSaltIsStableAndPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat(salt) error = %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != fs.FileMode(0o600) {
-		t.Fatalf("salt file perm = %o, want 600", perm)
+	// Windows does not honor Unix 0600 file modes (it reports 0666), so only
+	// assert the secret-file permission on platforms that enforce it.
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != fs.FileMode(0o600) {
+			t.Fatalf("salt file perm = %o, want 600", perm)
+		}
 	}
 }
 
