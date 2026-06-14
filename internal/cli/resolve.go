@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ const (
 	dataSchemaVersion      = 1
 	resolvedEventType      = "session_resolved"
 	defaultResolveMaturity = 24 * time.Hour
+	hookResolveLimit       = 8
 )
 
 // ResolvedDatapoint is the append-only data.jsonl record emitted when a pending
@@ -29,6 +31,7 @@ type ResolvedDatapoint struct {
 	SchemaVersion  int       `json:"schema_version"`
 	EventType      string    `json:"event_type"`
 	Timestamp      time.Time `json:"ts"`
+	SessionHash    string    `json:"session_hash,omitempty"`
 	Model          string    `json:"model,omitempty"`
 	Harness        string    `json:"harness"`
 	RepoHash       string    `json:"repo_hash"`
@@ -36,14 +39,16 @@ type ResolvedDatapoint struct {
 	ToolCalls      int       `json:"tool_calls"`
 	LinesAdded     int       `json:"lines_added"`
 	LinesSurvived  int       `json:"lines_survived"`
+	LinesCommitted int       `json:"lines_committed"`
 	Keeprate       float64   `json:"keeprate"`
 	Committed      bool      `json:"committed"`
 	ResolvedAfterH float64   `json:"resolved_after_h"`
 }
 
 type resolveOptions struct {
-	Maturity time.Duration
-	Now      func() time.Time
+	Maturity   time.Duration
+	Now        func() time.Time
+	MaxRecords int
 }
 
 func (o resolveOptions) normalized() resolveOptions {
@@ -93,41 +98,86 @@ func resolvePending(cfg Config, opts resolveOptions) error {
 	h := hashing.New(salt)
 
 	var errs []error
+	processed := 0
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
+		}
+		if opts.MaxRecords > 0 && processed >= opts.MaxRecords {
+			break
 		}
 		path := filepath.Join(pendingDir, entry.Name())
 		if err := resolvePendingFile(cfg, h, path, now, opts.Maturity); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", entry.Name(), err))
 		}
+		processed++
 	}
 	return errors.Join(errs...)
 }
 
 func resolvePendingFile(cfg Config, h hashing.Hasher, path string, now time.Time, maturity time.Duration) error {
-	record, err := readPendingRecordFile(path)
+	claimedPath, claimed, err := claimPendingFile(path, now)
 	if err != nil {
-		return err
+		return fmt.Errorf("claim pending record: %w", err)
+	}
+	if !claimed {
+		return nil
+	}
+
+	record, err := readPendingRecordFile(claimedPath)
+	if err != nil {
+		return quarantineClaimedPending(cfg, claimedPath, fmt.Errorf("decode pending record: %w", err))
 	}
 	if record.SchemaVersion != pendingSchemaVersion {
-		return fmt.Errorf("unsupported pending schema_version %d", record.SchemaVersion)
+		return quarantineClaimedPending(cfg, claimedPath, fmt.Errorf("unsupported pending schema_version %d", record.SchemaVersion))
+	}
+	if record.CapturedAt.IsZero() {
+		return quarantineClaimedPending(cfg, claimedPath, fmt.Errorf("pending record missing captured_at"))
 	}
 	if now.Sub(record.CapturedAt.UTC()) < maturity {
+		if err := os.Rename(claimedPath, path); err != nil {
+			return fmt.Errorf("restore immature pending record: %w", err)
+		}
 		return nil
 	}
 
 	datapoint, err := resolveRecord(h, record, now)
 	if err != nil {
-		return err
+		return quarantineClaimedPending(cfg, claimedPath, err)
 	}
 	if err := appendDatapoint(cfg, datapoint); err != nil {
+		if restoreErr := os.Rename(claimedPath, path); restoreErr != nil {
+			return errors.Join(fmt.Errorf("append datapoint: %w", err), fmt.Errorf("restore pending record: %w", restoreErr))
+		}
 		return fmt.Errorf("append datapoint: %w", err)
 	}
-	if err := os.Remove(path); err != nil {
+	if err := os.Remove(claimedPath); err != nil {
 		return fmt.Errorf("remove pending record: %w", err)
 	}
 	return nil
+}
+
+func claimPendingFile(path string, now time.Time) (string, bool, error) {
+	claimed := path + ".resolving-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(now.UnixNano(), 10)
+	if err := os.Rename(path, claimed); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return claimed, true, nil
+}
+
+func quarantineClaimedPending(cfg Config, claimedPath string, cause error) error {
+	dir := filepath.Join(proofsweStateDir(cfg), "quarantine")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return errors.Join(cause, fmt.Errorf("create quarantine dir: %w", err))
+	}
+	dst := filepath.Join(dir, filepath.Base(claimedPath)+".failed")
+	if err := os.Rename(claimedPath, dst); err != nil {
+		return errors.Join(cause, fmt.Errorf("quarantine pending record: %w", err))
+	}
+	return cause
 }
 
 func readPendingRecordFile(path string) (PendingRecord, error) {
@@ -137,7 +187,7 @@ func readPendingRecordFile(path string) (PendingRecord, error) {
 	}
 	var record PendingRecord
 	if err := json.Unmarshal(data, &record); err != nil {
-		return PendingRecord{}, fmt.Errorf("decode pending record: %w", err)
+		return PendingRecord{}, err
 	}
 	return record, nil
 }
@@ -157,16 +207,16 @@ func resolveRecord(h hashing.Hasher, record PendingRecord, now time.Time) (Resol
 		return ResolvedDatapoint{}, fmt.Errorf("index HEAD: %w", err)
 	}
 
+	survival := unionLineIndexes(working, head)
+	committedLines := head.clone()
 	linesSurvived := 0
-	committed := false
+	linesCommitted := 0
 	for _, line := range record.Lines {
-		inWorking := working.contains(line.PathHash, line.LineHash)
-		inHead := head.contains(line.PathHash, line.LineHash)
-		if inWorking || inHead {
+		if survival.consume(line.PathHash, line.LineHash) {
 			linesSurvived++
 		}
-		if inHead {
-			committed = true
+		if committedLines.consume(line.PathHash, line.LineHash) {
+			linesCommitted++
 		}
 	}
 
@@ -180,6 +230,7 @@ func resolveRecord(h hashing.Hasher, record PendingRecord, now time.Time) (Resol
 		SchemaVersion:  dataSchemaVersion,
 		EventType:      resolvedEventType,
 		Timestamp:      now,
+		SessionHash:    h.StringHash(record.SessionID),
 		Model:          record.Model,
 		Harness:        record.Harness,
 		RepoHash:       h.StringHash(record.RepoPath),
@@ -187,8 +238,9 @@ func resolveRecord(h hashing.Hasher, record PendingRecord, now time.Time) (Resol
 		ToolCalls:      record.ToolCallCount,
 		LinesAdded:     linesAdded,
 		LinesSurvived:  linesSurvived,
+		LinesCommitted: linesCommitted,
 		Keeprate:       keeprate,
-		Committed:      committed,
+		Committed:      linesCommitted > 0,
 		ResolvedAfterH: now.Sub(record.CapturedAt.UTC()).Hours(),
 	}, nil
 }
@@ -203,7 +255,7 @@ func wantedPathHashes(lines []PendingLine) map[string]bool {
 	return wanted
 }
 
-type lineHashIndex map[string]map[string]bool
+type lineHashIndex map[string]map[string]int
 
 func (idx lineHashIndex) add(pathHash, lineHash string) {
 	if pathHash == "" || lineHash == "" {
@@ -211,17 +263,49 @@ func (idx lineHashIndex) add(pathHash, lineHash string) {
 	}
 	lines := idx[pathHash]
 	if lines == nil {
-		lines = map[string]bool{}
+		lines = map[string]int{}
 		idx[pathHash] = lines
 	}
-	lines[lineHash] = true
+	lines[lineHash]++
 }
 
-func (idx lineHashIndex) contains(pathHash, lineHash string) bool {
+func (idx lineHashIndex) consume(pathHash, lineHash string) bool {
 	if idx == nil {
 		return false
 	}
-	return idx[pathHash][lineHash]
+	if idx[pathHash][lineHash] <= 0 {
+		return false
+	}
+	idx[pathHash][lineHash]--
+	return true
+}
+
+func (idx lineHashIndex) clone() lineHashIndex {
+	out := make(lineHashIndex, len(idx))
+	for pathHash, lines := range idx {
+		out[pathHash] = make(map[string]int, len(lines))
+		for lineHash, count := range lines {
+			out[pathHash][lineHash] = count
+		}
+	}
+	return out
+}
+
+func unionLineIndexes(a, b lineHashIndex) lineHashIndex {
+	out := a.clone()
+	for pathHash, lines := range b {
+		outLines := out[pathHash]
+		if outLines == nil {
+			outLines = map[string]int{}
+			out[pathHash] = outLines
+		}
+		for lineHash, count := range lines {
+			if count > outLines[lineHash] {
+				outLines[lineHash] = count
+			}
+		}
+	}
+	return out
 }
 
 func workingTreeLineIndex(root string, h hashing.Hasher, wanted map[string]bool) (lineHashIndex, error) {

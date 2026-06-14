@@ -100,7 +100,7 @@ func runHook(ctx context.Context, cfg Config, args []string) error {
 		if _, err := fmt.Fprintln(cfg.Stderr, noticeLine); err != nil {
 			return err
 		}
-		if resolveErr := resolvePending(cfg, resolveOptions{Maturity: defaultResolveMaturity, Now: time.Now}); resolveErr != nil {
+		if resolveErr := resolvePending(cfg, resolveOptions{Maturity: defaultResolveMaturity, Now: time.Now, MaxRecords: hookResolveLimit}); resolveErr != nil {
 			// Best-effort: resolving matured records must never disrupt startup.
 			_, _ = fmt.Fprintf(cfg.Stderr, "proofswe: resolve skipped: %v\n", resolveErr)
 		}
