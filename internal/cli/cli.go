@@ -13,6 +13,7 @@ var ErrUsage = errors.New("usage: proofswe <enable|disable|off|on|status|hook|ve
 
 type Config struct {
 	Args      []string
+	Stdin     io.Reader
 	Stdout    io.Writer
 	Stderr    io.Writer
 	Version   string
