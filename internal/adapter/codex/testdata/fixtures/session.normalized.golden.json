@@ -1,0 +1,127 @@
+[
+  {
+    "schema_version": 1,
+    "type": "session_start",
+    "source": {
+      "harness": "codex",
+      "path": "testdata/fixtures/rollout-2026-06-01T00-00-00-session-fixture.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "session-fixture",
+      "ts": "2026-06-01T00:00:00Z"
+    }
+  },
+  {
+    "schema_version": 1,
+    "type": "user_prompt",
+    "source": {
+      "harness": "codex",
+      "path": "testdata/fixtures/rollout-2026-06-01T00-00-00-session-fixture.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "model": {
+      "id": "gpt-5"
+    },
+    "event": {
+      "id": "2026-06-01T00:00:03Z:user_prompt:3",
+      "ts": "2026-06-01T00:00:03Z",
+      "turn_index": 3
+    },
+    "prompt_hash": "sha256:ec16bdebc960ccff66a4c7e5c0e13b19d8a7790688f66632e7e7a9cf33d1bc80"
+  },
+  {
+    "schema_version": 1,
+    "type": "tool_call",
+    "source": {
+      "harness": "codex",
+      "path": "testdata/fixtures/rollout-2026-06-01T00-00-00-session-fixture.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "model": {
+      "id": "gpt-5"
+    },
+    "event": {
+      "id": "call_fixture",
+      "ts": "2026-06-01T00:00:06Z",
+      "turn_index": 5
+    },
+    "tool_call_id": "call_fixture",
+    "name": "exec_command",
+    "arguments": {
+      "argument_hash": "sha256:670479e560b159c8e2605472d66d62ac06c83e36f149a33b168011c5bf647ba6",
+      "argument_keys": [
+        "cmd",
+        "workdir"
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "type": "tool_result",
+    "source": {
+      "harness": "codex",
+      "path": "testdata/fixtures/rollout-2026-06-01T00-00-00-session-fixture.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "model": {
+      "id": "gpt-5"
+    },
+    "event": {
+      "id": "call_fixture",
+      "ts": "2026-06-01T00:00:07Z",
+      "turn_index": 6
+    },
+    "tool_call_id": "call_fixture",
+    "result": {
+      "output_hash": "sha256:eb4e1f0b3eec2df32f2e88ba842beae499b1d7f19418a944aca277a08fff00b9",
+      "output_type": "string"
+    }
+  },
+  {
+    "type": "future_outer"
+  },
+  {
+    "schema_version": 1,
+    "type": "assistant_message",
+    "source": {
+      "harness": "codex",
+      "path": "testdata/fixtures/rollout-2026-06-01T00-00-00-session-fixture.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "model": {
+      "id": "gpt-5"
+    },
+    "event": {
+      "id": "2026-06-01T00:00:05Z:assistant_message:4",
+      "ts": "2026-06-01T00:00:05Z",
+      "turn_index": 4
+    },
+    "metrics": {
+      "input_tokens": 11,
+      "output_tokens": 25,
+      "cache_read_input_tokens": 4
+    },
+    "message_hash": "sha256:fd2ddd70c91f9d40d499ea1e4f3ee7afef5930dab00d9d928ceab4fda98b0158"
+  }
+]
