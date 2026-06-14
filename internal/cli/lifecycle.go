@@ -15,7 +15,7 @@ import (
 
 const (
 	proofsweTag     = "proofswe:v0"
-	noticeLine      = "proofswe observing locally; disable: proofswe off"
+	noticeLine      = "proofswe observing locally; disable: proofswe off; consent: proofswe consent"
 	codexBlockStart = "# BEGIN proofswe:v0 hooks"
 	codexBlockEnd   = "# END proofswe:v0 hooks"
 )
@@ -138,7 +138,12 @@ func printStatus(cfg Config) error {
 		return fmt.Errorf("read codex hooks: %w", err)
 	}
 
-	_, err = fmt.Fprintf(cfg.Stdout, "enabled: %t\nclaudecode hooks: %s\ncodex hooks: %s\n", enabled, wiredLabel(claudeWired), wiredLabel(codexWired))
+	resolved, consentErr := effectiveConsent(cfg, "")
+	if consentErr != nil {
+		return fmt.Errorf("read proofswe consent: %w", consentErr)
+	}
+
+	_, err = fmt.Fprintf(cfg.Stdout, "enabled: %t\nclaudecode hooks: %s\ncodex hooks: %s\nconsent tier: %s\ndefault guarantee: hashes-only stores no raw prompts, code, remotes, session ids, tool outputs, or patches; use `proofswe consent` to inspect opt-in tiers.\n", enabled, wiredLabel(claudeWired), wiredLabel(codexWired), resolved.Tier)
 	return err
 }
 

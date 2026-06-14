@@ -199,6 +199,10 @@ func CategoriesForTier(tier ConsentTier) []ConsentCategory {
 	}
 }
 
+func ConsentCategories() []ConsentCategory {
+	return append([]ConsentCategory(nil), orderedCategories...)
+}
+
 func CategorySet(categories []ConsentCategory) map[ConsentCategory]bool {
 	out := make(map[ConsentCategory]bool, len(categories))
 	for _, category := range categories {

@@ -9,7 +9,7 @@ import (
 	"runtime/debug"
 )
 
-var ErrUsage = errors.New("usage: proofswe <enable|disable|off|on|status|resolve|hook|version|help>")
+var ErrUsage = errors.New("usage: proofswe <enable|disable|off|on|status|consent|show|inspect|resolve|hook|version|help>")
 
 type Config struct {
 	Args      []string
@@ -60,6 +60,10 @@ func Run(ctx context.Context, cfg Config) error {
 		return setEnabled(cfg, true)
 	case "status":
 		return printStatus(cfg)
+	case "consent":
+		return runConsentCommand(cfg, cfg.Args[1:])
+	case "show", "inspect":
+		return runShowCommand(cfg, cfg.Args[1:])
 	case "resolve":
 		return runResolveCommand(cfg, cfg.Args[1:])
 	case "version", "-v", "--version":
@@ -78,6 +82,10 @@ Usage:
   proofswe off
   proofswe on
   proofswe status
+  proofswe consent show
+  proofswe consent set --tier=<hashes-only|prompts|actions|code|full>
+  proofswe show <session>
+  proofswe inspect <session>
   proofswe resolve [--maturity=24h]
   proofswe hook <claudecode|codex> <SessionStart|SessionEnd|Stop>
   proofswe version
