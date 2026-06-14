@@ -126,6 +126,15 @@ against the sycophancy attack — code optimized to *look* acceptable gets kept 
 hour one and dies by day 30. Longer horizons are where gaming goes to die, and
 survival curves are how you see it.
 
+**Measurement caveat:** v0's local resolve phase matches salted normalized line
+hashes at the same repo-relative path. It treats duplicate hashes as multisets so
+one surviving boilerplate line does not credit unlimited identical additions, but
+line hashes still cannot prove provenance when an agent-added line is identical
+to pre-existing content. This can skew survival upward for low-entropy lines
+(`}`, `return nil`, imports). Later methodology should test trivial-line filters
+or AST-level matching before any public leaderboard depends heavily on raw line
+survival.
+
 ### 2.3 Models are not assigned at random → fixed effects + natural experiments
 
 This is the deepest threat to validity and must be stated loudly: **users route
