@@ -129,6 +129,9 @@ func resolvePendingFile(cfg Config, h hashing.Hasher, path string, now time.Time
 
 	record, err := readPendingRecordFile(claimedPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return quarantineClaimedPending(cfg, claimedPath, fmt.Errorf("decode pending record: %w", err))
 	}
 	if record.SchemaVersion != pendingSchemaVersion {
@@ -155,6 +158,9 @@ func resolvePendingFile(cfg Config, h hashing.Hasher, path string, now time.Time
 		return fmt.Errorf("append datapoint: %w", err)
 	}
 	if err := os.Remove(claimedPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("remove pending record: %w", err)
 	}
 	return nil

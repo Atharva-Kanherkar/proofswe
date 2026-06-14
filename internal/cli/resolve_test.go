@@ -248,6 +248,37 @@ func TestResolveClaimsPendingRecordBeforeAppend(t *testing.T) {
 	}
 }
 
+func TestResolveMissingClaimedRecordSkipsAsLostRace(t *testing.T) {
+	gitAvailable(t)
+	repo := t.TempDir()
+	initRepo(t, repo)
+	cfg, h := snapshotConfig(t, repo)
+	now := time.Unix(1_700_100_000, 0).UTC()
+
+	record := pendingForTest(h, repo, "vanished", now.Add(-25*time.Hour),
+		lineRef{path: "keep.txt", text: "line1"},
+	)
+	path := pendingRecordPath(cfg, "vanished")
+	writePendingRecord(t, cfg, "vanished", record)
+	claimedPath, ok, err := claimPendingFile(path, now)
+	if err != nil {
+		t.Fatalf("claimPendingFile: %v", err)
+	}
+	if !ok {
+		t.Fatalf("claimPendingFile ok = false, want true")
+	}
+	if err := os.Remove(claimedPath); err != nil {
+		t.Fatalf("remove claimed file: %v", err)
+	}
+
+	if err := resolvePendingFile(cfg, h, path, now, 0); err != nil {
+		t.Fatalf("resolvePendingFile vanished claim: %v", err)
+	}
+	if _, err := os.Stat(dataLogPath(cfg)); !os.IsNotExist(err) {
+		t.Fatalf("data log should not exist after vanished claim, err=%v", err)
+	}
+}
+
 func TestResolveConcurrentClaimsEmitOneDatapoint(t *testing.T) {
 	gitAvailable(t)
 	repo := t.TempDir()
