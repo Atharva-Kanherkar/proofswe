@@ -210,8 +210,9 @@ func testEnvelope(eventType EventType, t *rapid.T) Envelope {
 		SchemaVersion: SchemaVersion,
 		Type:          eventType,
 		Source: SourceMeta{
-			Harness: HarnessName(rapid.SampledFrom([]string{"codex", "claudecode"}).Draw(t, "harness")),
-			Path:    rapid.StringMatching(`/tmp/session-[a-z]{3}\.jsonl`).Draw(t, "path"),
+			Harness:   HarnessName(rapid.SampledFrom([]string{"codex", "claudecode"}).Draw(t, "harness")),
+			Path:      rapid.StringMatching(`/tmp/session-[a-z]{3}\.jsonl`).Draw(t, "path"),
+			GitBranch: rapid.SampledFrom([]string{"main", "feature/test", ""}).Draw(t, "git_branch"),
 		},
 		Session: SessionMeta{
 			ID:  SessionId(rapid.StringMatching(`s_[a-z0-9]{6}`).Draw(t, "session_id")),
@@ -221,13 +222,17 @@ func testEnvelope(eventType EventType, t *rapid.T) Envelope {
 			ID: ModelId(rapid.SampledFrom([]string{"gpt-5", "claude-opus-4.1", "codex-mini"}).Draw(t, "model_id")),
 		},
 		Event: EventMeta{
-			ID:        rapid.StringMatching(`e_[a-z0-9]{6}`).Draw(t, "event_id"),
-			Timestamp: time.Unix(rapid.Int64Range(0, 1_999_999_999).Draw(t, "unix_ts"), 0).UTC(),
+			ID:         rapid.StringMatching(`e_[a-z0-9]{6}`).Draw(t, "event_id"),
+			Timestamp:  time.Unix(rapid.Int64Range(0, 1_999_999_999).Draw(t, "unix_ts"), 0).UTC(),
+			TurnIndex:  rapid.IntRange(0, 10_000).Draw(t, "turn_index"),
+			IsSubagent: rapid.Bool().Draw(t, "is_subagent"),
 		},
 		Metrics: Metrics{
-			InputTokens:  rapid.Int64Range(0, 100_000).Draw(t, "input_tokens"),
-			OutputTokens: rapid.Int64Range(0, 100_000).Draw(t, "output_tokens"),
-			DurationMS:   rapid.Int64Range(0, 600_000).Draw(t, "duration_ms"),
+			InputTokens:              rapid.Int64Range(0, 100_000).Draw(t, "input_tokens"),
+			OutputTokens:             rapid.Int64Range(0, 100_000).Draw(t, "output_tokens"),
+			CacheCreationInputTokens: rapid.Int64Range(0, 100_000).Draw(t, "cache_creation_input_tokens"),
+			CacheReadInputTokens:     rapid.Int64Range(0, 100_000).Draw(t, "cache_read_input_tokens"),
+			DurationMS:               rapid.Int64Range(0, 600_000).Draw(t, "duration_ms"),
 		},
 	}
 }

@@ -1,0 +1,170 @@
+[
+  {
+    "schema_version": 1,
+    "type": "session_start",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "evt-start",
+      "ts": "2026-06-01T00:00:00Z"
+    }
+  },
+  {
+    "schema_version": 1,
+    "type": "user_prompt",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "evt-user",
+      "ts": "2026-06-01T00:00:01Z",
+      "turn_index": 1
+    },
+    "prompt_hash": "sha256:d03d062501d729a8e0effd29fd75397167fd896c6d641cf37c3c588d60270743"
+  },
+  {
+    "schema_version": 1,
+    "type": "assistant_message",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "model": {
+      "id": "claude-opus-4-7"
+    },
+    "event": {
+      "id": "evt-assistant",
+      "ts": "2026-06-01T00:00:02Z",
+      "turn_index": 2,
+      "is_subagent": true
+    },
+    "metrics": {
+      "input_tokens": 11,
+      "output_tokens": 22,
+      "cache_creation_input_tokens": 33,
+      "cache_read_input_tokens": 44
+    },
+    "message_hash": "sha256:fd2ddd70c91f9d40d499ea1e4f3ee7afef5930dab00d9d928ceab4fda98b0158"
+  },
+  {
+    "schema_version": 1,
+    "type": "tool_call",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "model": {
+      "id": "claude-opus-4-7"
+    },
+    "event": {
+      "id": "evt-assistant",
+      "ts": "2026-06-01T00:00:02Z",
+      "turn_index": 2,
+      "is_subagent": true
+    },
+    "tool_call_id": "toolu_fixture",
+    "name": "Bash",
+    "arguments": {
+      "input_hash": "sha256:b01bddf138d59d217e41ccd8ebac9301222b92437c10b3bc51eafe79005d84a7",
+      "input_keys": [
+        "command",
+        "description"
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "type": "tool_result",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "evt-tool-result",
+      "ts": "2026-06-01T00:00:03Z",
+      "turn_index": 3,
+      "is_subagent": true
+    },
+    "tool_call_id": "toolu_fixture",
+    "result": {
+      "content_hash": "sha256:eb4e1f0b3eec2df32f2e88ba842beae499b1d7f19418a944aca277a08fff00b9",
+      "content_type": "string",
+      "is_error": false
+    }
+  },
+  {
+    "schema_version": 1,
+    "type": "user_prompt",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "evt-user-array",
+      "ts": "2026-06-01T00:00:04Z",
+      "turn_index": 4
+    },
+    "prompt_hash": "sha256:940126dcd608460725b704daaeb2d8a1eeedc2f1560977086104a20aaf80f14e"
+  },
+  {
+    "type": "system"
+  },
+  {
+    "schema_version": 1,
+    "type": "session_end",
+    "source": {
+      "harness": "claudecode",
+      "path": "testdata/fixtures/session.jsonl",
+      "git_branch": "main"
+    },
+    "session": {
+      "id": "session-fixture",
+      "cwd": "/workspace/project"
+    },
+    "event": {
+      "id": "evt-result",
+      "ts": "2026-06-01T00:00:06Z",
+      "turn_index": 6
+    },
+    "reason": "success"
+  },
+  {
+    "type": "pr-link"
+  },
+  {
+    "type": "attachment"
+  }
+]
