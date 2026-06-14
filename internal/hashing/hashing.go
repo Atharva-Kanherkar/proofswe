@@ -68,6 +68,7 @@ func LoadSalt(stateDir string) ([]byte, error) {
 			return salt, nil
 		}
 		// Corrupt or too-short salt: regenerate below.
+		_ = os.Remove(path)
 	case errors.Is(err, os.ErrNotExist):
 		// First use: generate below.
 	default:
@@ -79,9 +80,27 @@ func LoadSalt(stateDir string) ([]byte, error) {
 		return nil, fmt.Errorf("hashing: generate salt: %w", err)
 	}
 	if err := writeSaltFile(stateDir, path, salt); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return nil, fmt.Errorf("hashing: read raced salt: %w", readErr)
+			}
+			persisted, decodeErr := hex.DecodeString(strings.TrimSpace(string(data)))
+			if decodeErr == nil && len(persisted) >= MinSaltBytes {
+				return persisted, nil
+			}
+		}
 		return nil, err
 	}
-	return salt, nil
+	data, err = os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("hashing: read persisted salt: %w", err)
+	}
+	persisted, err := hex.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil || len(persisted) < MinSaltBytes {
+		return nil, fmt.Errorf("hashing: persisted invalid salt")
+	}
+	return persisted, nil
 }
 
 func writeSaltFile(dir, path string, salt []byte) error {
@@ -89,36 +108,23 @@ func writeSaltFile(dir, path string, salt []byte) error {
 		return fmt.Errorf("hashing: create state dir: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".salt-*")
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return fmt.Errorf("hashing: create temp salt: %w", err)
-	}
-	tmpName := tmp.Name()
-	removeTmp := true
-	defer func() {
-		if removeTmp {
-			_ = os.Remove(tmpName)
+		if errors.Is(err, os.ErrExist) {
+			return err
 		}
-	}()
-
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("hashing: chmod salt: %w", err)
+		return fmt.Errorf("hashing: create salt: %w", err)
 	}
-	if _, err := tmp.WriteString(hex.EncodeToString(salt) + "\n"); err != nil {
-		_ = tmp.Close()
+	if _, err := file.WriteString(hex.EncodeToString(salt) + "\n"); err != nil {
+		_ = file.Close()
 		return fmt.Errorf("hashing: write salt: %w", err)
 	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
 		return fmt.Errorf("hashing: sync salt: %w", err)
 	}
-	if err := tmp.Close(); err != nil {
+	if err := file.Close(); err != nil {
 		return fmt.Errorf("hashing: close salt: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("hashing: rename salt: %w", err)
-	}
-	removeTmp = false
 	return nil
 }

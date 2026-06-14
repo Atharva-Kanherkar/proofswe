@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -77,14 +78,13 @@ func parseHookInput(r io.Reader) (hookInput, error) {
 // a non-git cwd, an unavailable salt, or a missing transcript degrades gracefully
 // (the caller logs and exits 0) so capture never disrupts the user's session.
 func snapshot(cfg Config, harness string, in hookInput, now time.Time) error {
+	return snapshotContext(context.Background(), cfg, harness, in, now)
+}
+
+func snapshotContext(ctx context.Context, cfg Config, harness string, in hookInput, now time.Time) error {
 	cwd := in.CWD
 	if cwd == "" {
 		cwd = cfg.WorkDir
-	}
-	repoRoot, ok := gitRepoRoot(cwd)
-	if !ok {
-		// Not a git repo: nothing to snapshot, exit 0 silently.
-		return nil
 	}
 
 	salt, err := hashing.LoadSalt(proofsweStateDir(cfg))
@@ -92,11 +92,33 @@ func snapshot(cfg Config, harness string, in hookInput, now time.Time) error {
 		return fmt.Errorf("load hash salt: %w", err)
 	}
 	h := hashing.New(salt)
-
-	added, err := gitAddedLines(repoRoot)
+	resolved, err := effectiveConsent(cfg, "")
 	if err != nil {
-		return fmt.Errorf("compute added lines: %w", err)
+		return fmt.Errorf("resolve consent: %w", err)
 	}
+
+	task, taskResolved, err := captureTaskRecord(ctx, cfg, harness, in, now, salt, resolved)
+	if err != nil {
+		return err
+	}
+	if err := writeCapturedTask(cfg, task); err != nil {
+		return err
+	}
+	resolved = taskResolved
+
+	var repoRoot string
+	var added []lineRef
+	if categoryAllowed(resolved.Categories, core.CategoryCodeDiffs) {
+		var ok bool
+		repoRoot, ok = gitRepoRootContext(ctx, cwd)
+		if ok {
+			added, err = gitAddedLinesContext(ctx, repoRoot)
+			if err != nil {
+				return fmt.Errorf("compute added lines: %w", err)
+			}
+		}
+	}
+
 	lines := make([]PendingLine, 0, len(added))
 	for _, ref := range added {
 		normalized := strings.TrimSpace(ref.text)
@@ -138,10 +160,14 @@ type lineRef struct {
 }
 
 func gitRepoRoot(cwd string) (string, bool) {
+	return gitRepoRootContext(context.Background(), cwd)
+}
+
+func gitRepoRootContext(ctx context.Context, cwd string) (string, bool) {
 	if cwd == "" {
 		return "", false
 	}
-	out, err := runGit(cwd, "rev-parse", "--show-toplevel")
+	out, err := runGitContext(ctx, cwd, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", false
 	}
@@ -157,18 +183,22 @@ func gitRepoRoot(cwd string) (string, bool) {
 // are repo-relative. Committed-during-session changes need a session-start baseline
 // and are deferred (see the scope-metric open decision).
 func gitAddedLines(root string) ([]lineRef, error) {
+	return gitAddedLinesContext(context.Background(), root)
+}
+
+func gitAddedLinesContext(ctx context.Context, root string) ([]lineRef, error) {
 	var refs []lineRef
 
-	if _, err := runGit(root, "rev-parse", "--verify", "--quiet", "HEAD"); err == nil {
+	if _, err := runGitContext(ctx, root, "rev-parse", "--verify", "--quiet", "HEAD"); err == nil {
 		// core.quotePath=false keeps non-ASCII paths unquoted so header parsing is exact.
-		diff, err := runGit(root, "-c", "core.quotePath=false", "diff", "--no-color", "HEAD")
+		diff, err := runGitContext(ctx, root, "-c", "core.quotePath=false", "diff", "--no-color", "HEAD")
 		if err != nil {
 			return nil, err
 		}
 		refs = append(refs, parseDiffAddedLines(diff)...)
 	}
 
-	out, err := runGit(root, "-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard", "-z")
+	out, err := runGitContext(ctx, root, "-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +324,11 @@ func eventEnvelope(event core.NormalizedEvent) core.Envelope {
 }
 
 func runGit(dir string, args ...string) ([]byte, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	return runGitContext(context.Background(), dir, args...)
+}
+
+func runGitContext(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -305,6 +339,7 @@ func runGit(dir string, args ...string) ([]byte, error) {
 }
 
 func readRepoFile(root, rel string) ([]byte, error) {
+	rel = strings.ReplaceAll(rel, "\\", string(filepath.Separator))
 	clean := filepath.Clean(rel)
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
 		return nil, fmt.Errorf("unsafe repo-relative path %q", rel)

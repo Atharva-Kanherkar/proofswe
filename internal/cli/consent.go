@@ -113,7 +113,7 @@ func runConsentSet(cfg Config, args []string) error {
 	if err := writeTierConfig(cfg, tier, repoHash, nil, false); err != nil {
 		return fmt.Errorf("write proofswe config: %w", err)
 	}
-	if repoHash != "" || core.ConsentTierRank(tier) < core.ConsentTierRank(prev.Tier) {
+	if repoHash != "" || tier == core.ConsentTierHashesOnly || core.ConsentTierRank(tier) < core.ConsentTierRank(prev.Tier) {
 		if err := purgeTasksToTier(cfg, tier, repoHash); err != nil {
 			return fmt.Errorf("purge task records: %w", err)
 		}
@@ -564,6 +564,9 @@ func purgeTasksToTier(cfg Config, tier core.ConsentTier, repoHash string) error 
 			continue
 		}
 		dir := filepath.Join(tasksDir, entry.Name())
+		if repoHash == "" {
+			errs = append(errs, removeTaskCompanions(dir))
+		}
 		taskPath := filepath.Join(dir, "task.json")
 		task, err := readTaskRecordFile(taskPath)
 		if errors.Is(err, os.ErrNotExist) {

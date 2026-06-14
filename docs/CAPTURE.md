@@ -483,15 +483,20 @@ proofswe/
    doesn't see the git outcome and is invasive. Roadmap it or drop it?
 2. **Default consent tier** — metadata + line-hashes only (safest for
    on-by-default), or metadata + redacted content from day one?
-3. **Faster-JSON library** — opt-in build tag only, or default to `goccy/go-json`
+3. **`DO_NOT_TRACK` semantics for consent tiers** — full hook disable (current
+   v0 behavior, zero capture) vs default-tier-only capture with all content tiers
+   disabled. Phase A must continue surfacing this instead of silently treating a
+   browser-style signal as granular consent.
+4. **Task scope metric** — whether a reproducible task's scope should be measured
+   as line/file counts, structural AST edits, prompt complexity, or a hybrid. Keep
+   this separate from keeprate so "small but hard" and "large but mechanical" do
+   not collapse into one number.
+5. **Faster-JSON library** — opt-in build tag only, or default to `goccy/go-json`
    once benchmarked on real 2 GB rollouts? (`sonic` is amd64/arm64-only, which
    affects the cross-compile matrix.)
-4. **`os/exec` git vs `go-git`** — pending a `status`/`diff` ergonomics +
+6. **`os/exec` git vs `go-git`** — pending a `status`/`diff` ergonomics +
    correctness spike; the trade is "matches user's git exactly" vs "no external
    git dependency / fully self-contained binary."
-5. **Scope metric** — `gocloc` line/file counts now; structural tree-sitter pass
-   later (and whether its bindings' cgo is acceptable). Definition still owed (see
-   the timid-model problem in [`METHODOLOGY.md`](METHODOLOGY.md) §4).
 
 ---
 

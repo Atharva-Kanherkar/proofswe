@@ -113,7 +113,7 @@ func runHook(ctx context.Context, cfg Config, args []string) error {
 			_, _ = fmt.Fprintf(cfg.Stderr, "proofswe: snapshot skipped (bad hook input): %v\n", parseErr)
 			return nil
 		}
-		if snapErr := snapshot(cfg, args[0], in, time.Now()); snapErr != nil {
+		if snapErr := snapshotContext(ctx, cfg, args[0], in, time.Now()); snapErr != nil {
 			// Best-effort: capture failures must never disrupt the user's session.
 			_, _ = fmt.Fprintf(cfg.Stderr, "proofswe: snapshot skipped: %v\n", snapErr)
 		}

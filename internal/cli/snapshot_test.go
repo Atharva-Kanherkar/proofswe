@@ -34,8 +34,11 @@ func initRepo(t *testing.T, dir string) {
 	}
 	run("init", "-b", "main")
 	mustWrite(t, filepath.Join(dir, "keep.txt"), "line1\nline2\n")
+	mustWrite(t, filepath.Join(dir, "LICENSE"), "MIT License\n")
 	run("add", "keep.txt")
+	run("add", "LICENSE")
 	run("commit", "-m", "init")
+	run("remote", "add", "origin", "https://github.com/Atharva-Kanherkar/proofswe.git")
 }
 
 func mustWrite(t *testing.T, path, content string) {
@@ -71,6 +74,13 @@ func readPending(t *testing.T, cfg Config, sessionID string) PendingRecord {
 	return rec
 }
 
+func enableCodeConsent(t *testing.T, cfg Config) {
+	t.Helper()
+	if err := runConsentSet(cfg, []string{"--tier=code"}); err != nil {
+		t.Fatalf("enable code consent: %v", err)
+	}
+}
+
 // Acceptance 1 + 3: a known diff produces exactly the expected salted line hashes,
 // and the record contains no raw code.
 func TestSnapshotHashesMatchKnownDiffAndStoreNoRawCode(t *testing.T) {
@@ -78,6 +88,7 @@ func TestSnapshotHashesMatchKnownDiffAndStoreNoRawCode(t *testing.T) {
 	repo := t.TempDir()
 	initRepo(t, repo)
 	cfg, h := snapshotConfig(t, repo)
+	enableCodeConsent(t, cfg)
 
 	// Agent edits a tracked file (adds two lines) and creates an untracked file.
 	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nADDED_ALPHA\n  ADDED_BETA  \n")
@@ -120,7 +131,7 @@ func TestSnapshotHashesMatchKnownDiffAndStoreNoRawCode(t *testing.T) {
 	}
 }
 
-// Acceptance 2: a non-git cwd writes no record and does not error.
+// Acceptance 2: a non-git cwd writes hashes-only records and does not error.
 func TestSnapshotNonGitCwdWritesNothing(t *testing.T) {
 	gitAvailable(t)
 	plain := t.TempDir() // not a git repo
@@ -130,8 +141,9 @@ func TestSnapshotNonGitCwdWritesNothing(t *testing.T) {
 	if err := snapshot(cfg, "claudecode", in, time.Unix(1_700_000_000, 0)); err != nil {
 		t.Fatalf("snapshot non-git: %v", err)
 	}
-	if _, err := os.Stat(pendingRecordPath(cfg, "sess-x")); !os.IsNotExist(err) {
-		t.Fatalf("expected no pending record, stat err = %v", err)
+	rec := readPending(t, cfg, "sess-x")
+	if rec.RepoPath != "" || len(rec.Lines) != 0 {
+		t.Fatalf("non-git default pending = %+v, want no repo path or lines", rec)
 	}
 }
 
@@ -167,6 +179,7 @@ func TestSnapshotMetadataFromAdapter(t *testing.T) {
 			repo := t.TempDir()
 			initRepo(t, repo)
 			cfg, _ := snapshotConfig(t, repo)
+			enableCodeConsent(t, cfg)
 			mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nEDIT\n")
 
 			tpath := filepath.Join(t.TempDir(), "transcript.jsonl")
@@ -199,6 +212,7 @@ func TestSnapshotIsIdempotent(t *testing.T) {
 	repo := t.TempDir()
 	initRepo(t, repo)
 	cfg, _ := snapshotConfig(t, repo)
+	enableCodeConsent(t, cfg)
 	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nONE\n")
 
 	in := hookInput{SessionID: "dup", CWD: repo}

@@ -83,7 +83,10 @@ func safeTaskPathComponent(taskID string) (string, error) {
 		}
 	}
 	component := b.String()
-	if component == "." || component == ".." || strings.Contains(component, "..") || filepath.IsAbs(component) {
+	for strings.Contains(component, "..") {
+		component = strings.ReplaceAll(component, "..", "__")
+	}
+	if component == "." || component == ".." || filepath.IsAbs(component) {
 		return "", fmt.Errorf("unsafe task id %q", taskID)
 	}
 	return component, nil
