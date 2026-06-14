@@ -2,10 +2,10 @@
 {"timestamp":"2026-06-01T00:00:01Z","type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/workspace/project","current_date":"2026-06-01","timezone":"UTC","model":"gpt-5"}}
 {"timestamp":"2026-06-01T00:00:02Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","started_at":1780272002,"model_context_window":258400,"collaboration_mode_kind":"default"}}
 {"timestamp":"2026-06-01T00:00:03Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"summarize the open issues"}]}}
-{"timestamp":"2026-06-01T00:00:04Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":11,"cached_input_tokens":4,"output_tokens":22,"reasoning_output_tokens":3},"total_token_usage":{"input_tokens":11,"cached_input_tokens":4,"output_tokens":22,"reasoning_output_tokens":3}}}}
 {"timestamp":"2026-06-01T00:00:05Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I'll list the issues."}]}}
 {"timestamp":"2026-06-01T00:00:06Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_fixture","arguments":"{\"cmd\":\"gh issue list\",\"workdir\":\"/workspace/project\"}"}}
 {"timestamp":"2026-06-01T00:00:07Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_fixture","output":"issue #5 is open"}}
 {"timestamp":"2026-06-01T00:00:08Z","type":"response_item","payload":{"type":"reasoning","summary":[]}}
+{"timestamp":"2026-06-01T00:00:08.5Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":11,"cached_input_tokens":4,"output_tokens":22,"reasoning_output_tokens":3},"total_token_usage":{"input_tokens":11,"cached_input_tokens":4,"output_tokens":22,"reasoning_output_tokens":3}}}}
 {"timestamp":"2026-06-01T00:00:09Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","completed_at":1780272009,"duration_ms":7000,"time_to_first_token_ms":1000}}
 {"timestamp":"2026-06-01T00:00:10Z","type":"future_outer","payload":{"secret":"do not keep this"}}

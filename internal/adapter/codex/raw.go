@@ -12,9 +12,10 @@ import (
 )
 
 type parser struct {
-	h     hasher
-	path  string
-	state rolloutState
+	h       hasher
+	path    string
+	state   rolloutState
+	pending []core.NormalizedEvent
 }
 
 type rolloutState struct {
@@ -45,6 +46,34 @@ func (p *parser) Parse(data []byte) ([]core.NormalizedEvent, error) {
 	events, err := raw.Normalized(p)
 	p.state.turnIndex++
 	return events, err
+}
+
+func (p *parser) Flush() []core.NormalizedEvent {
+	if len(p.pending) == 0 {
+		return nil
+	}
+	events := p.pending
+	p.pending = nil
+	return events
+}
+
+func (p *parser) setState(state rolloutState) {
+	if state.sessionID != "" {
+		p.state.sessionID = state.sessionID
+	}
+	if state.cwd != "" {
+		p.state.cwd = state.cwd
+	}
+	if state.gitBranch != "" {
+		p.state.gitBranch = state.gitBranch
+	}
+	if state.model != "" {
+		p.state.model = state.model
+	}
+	if state.turnID != "" {
+		p.state.turnID = state.turnID
+	}
+	p.state.turnIndex = state.turnIndex
 }
 
 type RawLine struct {
@@ -194,6 +223,7 @@ func (l RawLine) Normalized(p *parser) ([]core.NormalizedEvent, error) {
 }
 
 func normalizeSessionMeta(ts string, raw rawSessionMeta, p *parser) []core.NormalizedEvent {
+	events := p.Flush()
 	if raw.ID != "" {
 		p.state.sessionID = core.SessionId(raw.ID)
 	}
@@ -206,7 +236,8 @@ func normalizeSessionMeta(ts string, raw rawSessionMeta, p *parser) []core.Norma
 	if raw.Timestamp != "" {
 		ts = raw.Timestamp
 	}
-	return []core.NormalizedEvent{&core.SessionStart{Envelope: p.envelope(core.EventTypeSessionStart, ts, string(p.state.sessionID))}}
+	events = append(events, &core.SessionStart{Envelope: p.envelope(core.EventTypeSessionStart, ts, string(p.state.sessionID))})
+	return events
 }
 
 func normalizeEventMsg(ts string, raw rawEventMsg, p *parser) []core.NormalizedEvent {
@@ -215,9 +246,13 @@ func normalizeEventMsg(ts string, raw rawEventMsg, p *parser) []core.NormalizedE
 	}
 	switch raw.Type {
 	case "task_started":
-		return []core.NormalizedEvent{&core.SessionStart{Envelope: p.envelope(core.EventTypeSessionStart, ts, raw.TurnID)}}
+		return p.Flush()
 	case "token_count":
-		p.state.nextMetrics = metricsFromTokenUsage(raw.Info.LastTokenUsage)
+		p.applyMetrics(metricsFromTokenUsage(raw.Info.LastTokenUsage))
+		return nil
+	case "task_complete":
+		return p.Flush()
+	case "agent_message", "user_message":
 		return nil
 	default:
 		return []core.NormalizedEvent{core.Unknown{Type: core.EventType("event_msg." + raw.Type), Raw: sanitizedUnknown("event_msg." + raw.Type)}}
@@ -233,7 +268,8 @@ func normalizeResponseItem(ts string, raw rawResponseItem, p *parser) []core.Nor
 			if hash == "" {
 				return nil
 			}
-			return []core.NormalizedEvent{&core.UserPrompt{Envelope: p.envelope(core.EventTypeUserPrompt, ts, ""), PromptHash: hash}}
+			p.pending = append(p.pending, &core.UserPrompt{Envelope: p.envelope(core.EventTypeUserPrompt, ts, ""), PromptHash: hash})
+			return nil
 		case "assistant":
 			hash := messageContentHash(p.h, raw.Content)
 			if hash == "" {
@@ -241,23 +277,28 @@ func normalizeResponseItem(ts string, raw rawResponseItem, p *parser) []core.Nor
 			}
 			env := p.envelope(core.EventTypeAssistantMessage, ts, "")
 			env.Metrics = p.takeMetrics()
-			return []core.NormalizedEvent{&core.AssistantMessage{Envelope: env, MessageHash: hash}}
+			p.pending = append(p.pending, &core.AssistantMessage{Envelope: env, MessageHash: hash})
+			return nil
 		default:
 			return []core.NormalizedEvent{core.Unknown{Type: core.EventType("response_item.message." + raw.Role), Raw: sanitizedUnknown("response_item.message." + raw.Role)}}
 		}
 	case "function_call", "custom_tool_call", "web_search_call", "tool_search_call":
-		return []core.NormalizedEvent{&core.ToolCall{
+		p.pending = append(p.pending, &core.ToolCall{
 			Envelope:   p.envelope(core.EventTypeToolCall, ts, raw.CallID),
 			ToolCallID: core.ToolCallId(raw.CallID),
 			Name:       raw.Name,
 			Arguments:  sanitizedToolInput(p.h, raw.Arguments),
-		}}
+		})
+		return nil
 	case "function_call_output", "custom_tool_call_output", "web_search_output", "tool_search_output":
-		return []core.NormalizedEvent{&core.ToolResult{
+		p.pending = append(p.pending, &core.ToolResult{
 			Envelope:   p.envelope(core.EventTypeToolResult, ts, raw.CallID),
 			ToolCallID: core.ToolCallId(raw.CallID),
 			Result:     sanitizedToolOutput(p.h, raw.Output),
-		}}
+		})
+		return nil
+	case "reasoning":
+		return nil
 	default:
 		return []core.NormalizedEvent{core.Unknown{Type: core.EventType("response_item." + raw.Type), Raw: sanitizedUnknown("response_item." + raw.Type)}}
 	}
@@ -301,7 +342,24 @@ func (p *parser) takeMetrics() core.Metrics {
 	return metrics
 }
 
+func (p *parser) applyMetrics(metrics core.Metrics) {
+	if metrics == (core.Metrics{}) {
+		return
+	}
+	for i := len(p.pending) - 1; i >= 0; i-- {
+		assistant, ok := p.pending[i].(*core.AssistantMessage)
+		if !ok {
+			continue
+		}
+		assistant.Metrics = metrics
+		return
+	}
+	p.state.nextMetrics = metrics
+}
+
 func metricsFromTokenUsage(usage rawTokenUsage) core.Metrics {
+	// Codex/OpenAI input_tokens is the total input; cached_input_tokens is a
+	// subset surfaced separately for downstream cache-hit accounting.
 	return core.Metrics{
 		InputTokens:          usage.InputTokens,
 		OutputTokens:         usage.OutputTokens + usage.ReasoningOutputTokens,

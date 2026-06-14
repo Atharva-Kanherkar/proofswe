@@ -204,6 +204,88 @@ func cursorPath(stateDir, transcriptPath string) string {
 	return filepath.Join(stateDir, "cursors", hex.EncodeToString(sum[:])+".cursor")
 }
 
+func parserStatePath(stateDir, transcriptPath string) string {
+	sum := sha256.Sum256([]byte(transcriptPath))
+	return filepath.Join(stateDir, "cursors", hex.EncodeToString(sum[:])+".state.json")
+}
+
+type parserStateFile struct {
+	SessionID core.SessionId `json:"session_id,omitempty"`
+	CWD       string         `json:"cwd,omitempty"`
+	GitBranch string         `json:"git_branch,omitempty"`
+	Model     core.ModelId   `json:"model,omitempty"`
+	TurnID    string         `json:"turn_id,omitempty"`
+	TurnIndex int            `json:"turn_index,omitempty"`
+}
+
+func loadParserState(path string) (rolloutState, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return rolloutState{}, nil
+		}
+		return rolloutState{}, fmt.Errorf("read parser state: %w", err)
+	}
+	var disk parserStateFile
+	if err := json.Unmarshal(data, &disk); err != nil {
+		return rolloutState{}, fmt.Errorf("decode parser state: %w", err)
+	}
+	return rolloutState{
+		sessionID: disk.SessionID,
+		cwd:       disk.CWD,
+		gitBranch: disk.GitBranch,
+		model:     disk.Model,
+		turnID:    disk.TurnID,
+		turnIndex: disk.TurnIndex,
+	}, nil
+}
+
+func saveParserState(path string, state rolloutState) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create parser state dir: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(dir, ".state-*")
+	if err != nil {
+		return fmt.Errorf("create temp parser state: %w", err)
+	}
+	tmpName := tmp.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	disk := parserStateFile{
+		SessionID: state.sessionID,
+		CWD:       state.cwd,
+		GitBranch: state.gitBranch,
+		Model:     state.model,
+		TurnID:    state.turnID,
+		TurnIndex: state.turnIndex,
+	}
+	encoder := json.NewEncoder(tmp)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(disk); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write parser state: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync parser state: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close parser state: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename parser state: %w", err)
+	}
+	removeTmp = false
+	return nil
+}
+
 func ParseFile(salt []byte, path string) ([]core.NormalizedEvent, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -227,13 +309,18 @@ func ParseFile(salt []byte, path string) ([]core.NormalizedEvent, error) {
 	if err := file.Close(); err != nil {
 		return nil, core.NewError(core.ErrorKindAdapter, "close codex rollout", err)
 	}
+	events = append(events, parser.Flush()...)
 	return events, nil
 }
 
 func ParseRaw(salt []byte, data []byte, path string, turnIndex int) ([]core.NormalizedEvent, error) {
 	parser := newParser(salt, path)
 	parser.state.turnIndex = turnIndex
-	return parser.Parse(data)
+	events, err := parser.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	return append(events, parser.Flush()...), nil
 }
 
 func captureTranscript(transcript Transcript, salt []byte, stateDir string, logger *slog.Logger, yield func(core.NormalizedEvent) bool) bool {
@@ -260,6 +347,11 @@ func captureTranscript(transcript Transcript, salt []byte, stateDir string, logg
 	}
 
 	parser := newParser(salt, transcript.Path)
+	if state, stateErr := loadParserState(parserStatePath(stateDir, transcript.Path)); stateErr == nil {
+		parser.setState(state)
+	} else if logger != nil {
+		logger.Warn("load codex parser state", "path", transcript.Path, "error", stateErr)
+	}
 	stats, err := reader.ReadNewLines(file, cursor, reader.Options{Logger: logger}, func(line []byte, _ int64) error {
 		events, parseErr := parser.Parse(line)
 		if parseErr != nil {
@@ -281,8 +373,16 @@ func captureTranscript(transcript Transcript, salt []byte, stateDir string, logg
 	if err != nil && logger != nil {
 		logger.Warn("read codex rollout", "path", transcript.Path, "error", err)
 	}
+	for _, event := range parser.Flush() {
+		if !yield(event) {
+			return false
+		}
+	}
 	if saveErr := reader.SaveCursor(cursorFile, stats.Cursor); saveErr != nil && logger != nil {
 		logger.Warn("save rollout cursor", "path", transcript.Path, "error", saveErr)
+	}
+	if saveErr := saveParserState(parserStatePath(stateDir, transcript.Path), parser.state); saveErr != nil && logger != nil {
+		logger.Warn("save codex parser state", "path", transcript.Path, "error", saveErr)
 	}
 	return true
 }

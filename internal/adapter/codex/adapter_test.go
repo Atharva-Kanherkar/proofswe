@@ -123,18 +123,45 @@ func TestTaskCompleteDoesNotMapToSessionEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseRaw() error = %v", err)
 	}
+	if len(events) != 0 {
+		t.Fatalf("len(events) = %d, want 0 (known turn boundary skipped)", len(events))
+	}
+}
+
+func TestTokenMetricsAttachUnderRealisticOrdering(t *testing.T) {
+	parser := newParser(testSalt, "probe.jsonl")
+	lines := []string{
+		`{"timestamp":"2026-06-01T00:00:00Z","type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/workspace/project","model":"gpt-5"}}`,
+		`{"timestamp":"2026-06-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}`,
+		`{"timestamp":"2026-06-01T00:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":11,"cached_input_tokens":4,"output_tokens":22,"reasoning_output_tokens":3}}}}`,
+		`{"timestamp":"2026-06-01T00:00:03Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","duration_ms":10}}`,
+	}
+
+	var events []core.NormalizedEvent
+	for _, line := range lines {
+		got, err := parser.Parse([]byte(line))
+		if err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+		events = append(events, got...)
+	}
+	events = append(events, parser.Flush()...)
+
 	if len(events) != 1 {
 		t.Fatalf("len(events) = %d, want 1", len(events))
 	}
-	if _, ok := events[0].(*core.SessionEnd); ok {
-		t.Fatalf("task_complete event = %T, must not be *core.SessionEnd", events[0])
-	}
-	unknown, ok := events[0].(core.Unknown)
+	assistant, ok := events[0].(*core.AssistantMessage)
 	if !ok {
-		t.Fatalf("task_complete event = %T, want core.Unknown", events[0])
+		t.Fatalf("event = %T, want *core.AssistantMessage", events[0])
 	}
-	if unknown.Type != "event_msg.task_complete" {
-		t.Fatalf("Unknown.Type = %q, want event_msg.task_complete", unknown.Type)
+	if assistant.Metrics.InputTokens != 11 {
+		t.Fatalf("InputTokens = %d, want 11", assistant.Metrics.InputTokens)
+	}
+	if assistant.Metrics.OutputTokens != 25 {
+		t.Fatalf("OutputTokens = %d, want 25", assistant.Metrics.OutputTokens)
+	}
+	if assistant.Metrics.CacheReadInputTokens != 4 {
+		t.Fatalf("CacheReadInputTokens = %d, want 4", assistant.Metrics.CacheReadInputTokens)
 	}
 }
 
@@ -172,7 +199,7 @@ func TestResponseItemKindsMapToEventsOrUnknown(t *testing.T) {
 		{
 			name: "reasoning",
 			line: `{"timestamp":"2026-06-01T00:00:00Z","type":"response_item","payload":{"type":"reasoning","summary":["secret thought"]}}`,
-			want: core.Unknown{},
+			want: nil,
 		},
 	}
 	for _, tt := range cases {
@@ -180,6 +207,12 @@ func TestResponseItemKindsMapToEventsOrUnknown(t *testing.T) {
 			events, err := ParseRaw(testSalt, []byte(tt.line), "probe.jsonl", 0)
 			if err != nil {
 				t.Fatalf("ParseRaw() error = %v", err)
+			}
+			if tt.want == nil {
+				if len(events) != 0 {
+					t.Fatalf("len(events) = %d, want 0", len(events))
+				}
+				return
 			}
 			if len(events) != 1 {
 				t.Fatalf("len(events) = %d, want 1", len(events))
@@ -252,6 +285,59 @@ func TestCaptureResumesFromCursor(t *testing.T) {
 	}
 	if _, ok := third[0].(*core.UserPrompt); !ok {
 		t.Fatalf("third event = %T, want *core.UserPrompt", third[0])
+	}
+}
+
+func TestCaptureResumeRestoresParserState(t *testing.T) {
+	root := t.TempDir()
+	state := t.TempDir()
+	sessionDir := filepath.Join(root, "sessions", "2026", "06", "01")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	path := filepath.Join(sessionDir, "rollout-2026-06-01T00-00-00-session-a.jsonl")
+	header := strings.Join([]string{
+		`{"timestamp":"2026-06-01T00:00:00Z","type":"session_meta","payload":{"id":"session-a","timestamp":"2026-06-01T00:00:00Z","cwd":"/workspace/project","git":{"branch":"main"}}}`,
+		`{"timestamp":"2026-06-01T00:00:01Z","type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/workspace/project","model":"gpt-5"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(header), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	adapter := Adapter{Root: root, StateDir: state}
+	first := collectEvents(adapter.Capture(core.CaptureTriggerStop))
+	if len(first) != 1 {
+		t.Fatalf("first capture = %d events, want 1 session_start", len(first))
+	}
+
+	appended := `{"timestamp":"2026-06-01T00:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}` + "\n"
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	if _, err := file.WriteString(appended); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	second := collectEvents(adapter.Capture(core.CaptureTriggerStop))
+	if len(second) != 1 {
+		t.Fatalf("second capture = %d events, want 1", len(second))
+	}
+	assistant, ok := second[0].(*core.AssistantMessage)
+	if !ok {
+		t.Fatalf("second event = %T, want *core.AssistantMessage", second[0])
+	}
+	if assistant.Session.CWD != "/workspace/project" {
+		t.Fatalf("Session.CWD = %q, want /workspace/project", assistant.Session.CWD)
+	}
+	if assistant.Source.GitBranch != "main" {
+		t.Fatalf("Source.GitBranch = %q, want main", assistant.Source.GitBranch)
+	}
+	if assistant.Model.ID != "gpt-5" {
+		t.Fatalf("Model.ID = %q, want gpt-5", assistant.Model.ID)
 	}
 }
 
