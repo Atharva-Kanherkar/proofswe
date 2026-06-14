@@ -97,8 +97,14 @@ func runHook(ctx context.Context, cfg Config, args []string) error {
 
 	switch args[1] {
 	case "SessionStart":
-		_, err := fmt.Fprintln(cfg.Stderr, noticeLine)
-		return err
+		if _, err := fmt.Fprintln(cfg.Stderr, noticeLine); err != nil {
+			return err
+		}
+		if resolveErr := resolvePending(cfg, resolveOptions{Maturity: defaultResolveMaturity, Now: time.Now}); resolveErr != nil {
+			// Best-effort: resolving matured records must never disrupt startup.
+			_, _ = fmt.Fprintf(cfg.Stderr, "proofswe: resolve skipped: %v\n", resolveErr)
+		}
+		return nil
 	case "SessionEnd", "Stop":
 		// Codex fires Stop per turn (no SessionEnd); the record is idempotent, so
 		// each fire overwrites with the session's current cumulative diff.
