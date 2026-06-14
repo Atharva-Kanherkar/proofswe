@@ -1,0 +1,144 @@
+# codex/phase-a-task-consent - Test Contract
+
+## Functional Behavior
+- Add a schema-versioned `Task` record in `internal/core`, separate from `NormalizedEvent`, with independent `task_schema_version`, all-tier metadata fields, per-tier cleartext fields, tolerant JSON parsing, deterministic task IDs, file role classification, and a typed `Project(task, tier)` projection.
+- Add an import-pure `internal/redact` package with no IO and no network imports. It must scrub approved cleartext for prompts, actions, and code before disk writes, detect the secret/PII categories named in issue #24, keep structural text parseable, and emit a non-leaking `redaction_report`.
+- Add consent tiers `hashes-only`, `prompts`, `actions`, `code`, and `full` as strict supersets plus granular categories `starting-prompt`, `all-prompts`, `assistant-msgs`, `tool-calls`, `tool-outputs`, `code+diffs`, `repo-linkage`, and `full-transcript`.
+- Default capture, with no consent config, writes `pending/<id>.json` and `tasks/<id>/task.json` with zero cleartext prompt, code, remote, session id, patch, or base commit content. Only salted hashes and metadata are stored.
+- Add `proofswe consent` commands for non-interactive tier/category changes, consent display, decline/no-reprompt persistence, per-repo overrides keyed by remote hash, demonstrable `consent.json`, and downgrade purge. Interactive consent must only run when stdin is a TTY; non-TTY without flags must never hang and must exit non-zero with guidance.
+- Add `proofswe show` and `proofswe inspect <session>` that print the exact projected record the current tier would write. Show/inspect must byte-match capture output for the same tier and must never leak stale higher-tier cleartext.
+- Wire task capture into hook lifecycle: `SessionStart` preserves the loud notice before capture and names both `proofswe off` and `proofswe consent`; `SessionEnd`/`Stop` writes the task record beside the existing pending record.
+- Preserve kill-switch first semantics: `PROOFSWE_OFF=1`, `DO_NOT_TRACK=1`, `enabled=false`, and `.proofswe-ignore` each independently short-circuit to zero capture before any task directory or record is written.
+- Gate repo linkage and git calls behind repo-linkage consent. The default hashes-only path must run zero git subprocesses. Git subprocesses must honor context cancellation and degrade cleanly when git is absent.
+- Code-bearing tiers may write raw code only when provenance is complete and the repo is public with a permissive SPDX license (`MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `Apache-2.0`, `ISC`, `Unlicense`, `0BSD`). Private, paid/enterprise, copyleft, no-license, unknown-license, or incomplete-provenance cases must fall back to hashes-only even with explicit opt-in.
+- Downgrading global or per-repo consent must deterministically purge now-disallowed cleartext everywhere under `~/.proofswe`, while salted hashes survive, config reflects the lower tier, and decline/downgrade never triggers future auto-reprompt.
+- Preserve local-only capture. No network may be introduced in the capture or redaction path.
+- Publish the default-tier guarantee in status/notice-accessible text: proofswe never stores raw prompt/code/remote/content at the default tier.
+- Surface the issue's OPEN decisions in `docs/CAPTURE.md` section 10 rather than silently resolving them.
+
+## Unit Tests
+- `TestProjectDropsHigherTierFields` - table per tier verifies exactly which `Task` fields remain populated and which cleartext fields are blanked.
+- `TestDefaultTierStoresNoCleartext` - default projection blanks prompt text, code patch/test patch, repo remote/base commit, and session id while preserving hashes.
+- `TestFileRoleClassification` - classifies test, solution, config, and lockfile paths across common languages.
+- `TestFileRoleClassificationPathTraversalAndOddNames` - hostile and odd paths never escape the repo and are not misclassified as benign roles.
+- `TestTaskIDIsDeterministicAndAddressable` - task IDs are stable for the same salt/remote/session and change when any input changes.
+- `TestTaskRoundTrip` - marshal/unmarshal of `Task` is identity for modeled fields.
+- `TestTolerantParseUnknownFutureTaskFieldsRoundTrip` - unknown future schema versions and unknown nested fields parse without error with deterministic re-marshal behavior.
+- `TestTierPresetExpandsToCategories` - presets map to exact categories, toggles compose, and `starting-prompt` is narrower than `all-prompts`.
+- `TestConsentStateTransitions` - transition table covers upgrades, downgrades, re-decline, invalid actions, and conflicting per-repo/global settings.
+- `TestConsentMalformedConfigFailsClosedToHashesOnly` - garbage, empty, duplicate, and conflicting tier config fails closed.
+- `TestConsentPrecedenceFlagsOverEnvOverRepoOverGlobal` - precedence is flags > env > repo > global > default, with restrictive per-repo and kill-switch behavior pinned.
+- `TestConsentEnvTierCannotExceedPersistedConsentRecord` - env cannot silently upgrade beyond demonstrable recorded consent.
+- `TestConsentRecordWriteFailFailsClosed` - failed consent record write falls back to hashes-only.
+- `TestConsentRecordRoundTripsAndIsDemonstrable` - consent history includes timestamp, tiers, policy version, install id, and keeps prior grants.
+- `TestConsentNoAutoRepromptPersistsAcrossRestart` - decline/no-reprompt persists on disk across fresh configs.
+- `TestModelFromTranscriptNotStdin` - transcript model beats absent stdin model.
+- `TestModelFromTranscriptFallbackChain` - transcript last-non-empty model wins, stdin is fallback, empty model is allowed without crash.
+- `TestRedactCategories` - every planted secret category named in issue #24 is redacted with zero leak.
+- `TestRedactNoCategoryRegressesToZero` - detector registry covers every taxonomy/category entry.
+- `TestRedactOverRedactionBounds` - UUIDs, git SHAs, benign image/base64/hash decoys are not over-redacted when allowlisted.
+- `TestRedactPerRuleSelfValidation` - each detector matches its true positives and rejects its false positives.
+- `TestRedactReportCountsAreExact` - redaction report counts exactly match planted spans and categories.
+- `TestRedactReportNeverEchoesSecret` - reports and errors never contain matched secret text.
+- `TestRedactDoesNotMangleStructure` - scrubbed JSON blobs and unified diffs remain structurally parseable.
+- `TestRedactPromptPII` - emails, IPs, phones, and lightweight person-name fixtures are caught, with documented known misses explicit.
+- `TestLoadSaltConcurrentFirstUseSingleSalt` - concurrent first salt creation converges to one persisted salt and all readers use it.
+- `TestCorruptOrTruncatedSaltRegenerates` - corrupt/truncated salt regenerates safely and cross-salt confusion is detectable.
+
+## Integration / Functional Tests
+- `TestTaskRecordGolden_Claude` and `TestTaskRecordGolden_Codex` - fixture sessions produce stable task records with required reproducible fields.
+- `TestTierProjectionGolden` - golden projected task JSON per tier.
+- `TestConsentMenuRenderGolden` - golden consent menu, config, and consent JSON shapes.
+- `TestScrubbedTranscriptGolden_Claude` and `TestScrubbedTranscriptGolden_Codex` - adapter-to-task redaction output is stable.
+- `FuzzScrubNeverLeaksSecretSubstring` - fuzz planted secrets in prompts and assert no direct, case-folded, stripped, or normalized substrings survive.
+- `FuzzScrubNeverLeaksSecretAcrossEncoding` - encoded and split secrets do not survive decoded in output.
+- `FuzzScrubNeverLeaksSecretInRedactionReport` - fuzz reports and errors never echo secret input.
+- `FuzzScrubNoPanicOnGarbage` - arbitrary bytes, invalid UTF-8, and huge lines never panic.
+- `FuzzScrubTerminatesUnderAdversarialInput` - adversarial inputs finish within a per-input wall-clock bound.
+- `FuzzProjectNeverWidensTier` - projected tasks never reveal fields disallowed at the chosen tier.
+- `FuzzParseTaskTolerant` - future/unknown task JSON parses without panic or error.
+- `TestScrubReplaysCommittedFuzzCorpus` - committed fuzz corpus entries are replayed in normal tests for no-leak regression coverage.
+- `TestTierNestingSuperset` - property: higher tiers are strict category supersets and tier/category round-trip is idempotent.
+- `TestProjectMonotonicity` - property: restrictive projections never reveal more and repeated projection converges.
+- `TestScrubIsIdempotent` - property: scrubbing twice equals scrubbing once and generated secrets do not survive.
+- `TestConsentMachineInvariant` - property: repeated consent actions keep on-disk cleartext within current-tier allowance.
+- `TestRepoLinkageCaptureMatchesGit` - temp repo linkage matches git only with repo-linkage consent and degrades in non-git cwd.
+- `TestDefaultTierRunsZeroGitSubprocess` - default full hook flow uses a git counting spy and performs zero git calls.
+- `TestDetachedHEADCapture` - detached HEAD records commit and stable branch semantics.
+- `TestEmptyRepoNoCommitsCapture` - empty git repos degrade without bogus SHA or crash.
+- `TestNoRemoteOrMultipleRemotesCapture` - missing/multiple remotes degrade and fail code gate closed.
+- `TestDirtySubmoduleAndNestedRepoCwd` - nested repo/submodule captures inner repo only.
+- `TestGitBinaryAbsentDegradesNotErrors` - missing git with repo-linkage consent exits 0 and degrades.
+- `TestGitSubprocessHonorsContextCancellation` - canceled context aborts git within budget.
+- `TestEnvironmentFingerprintStability` - lockfile/toolchain fingerprints are stable and change with lockfile content.
+- `TestTaskCaptureFromFixture_Claude` and `TestTaskCaptureFromFixture_Codex` - fixture capture derives model and sorted distinct tools.
+- `TestStartingPromptVsAllPrompts` - starting-prompt captures only first user prompt; all-prompts captures every user prompt with turn index.
+- `TestStartingPromptVsAllPromptsBoundaryCases` - zero user prompts and first-user-not-turn-zero do not panic or miscapture.
+- `TestToolsListIsSortedDistinctAndStable` - tool names are sorted, deduped, deterministic, and ignore unknown events.
+- `TestE2EConsentUpgradeThenCapture` - consent upgrade to prompts writes scrubbed prompt content and keeps pending record unchanged.
+- `TestE2EShowMatchesWrite` - `show` byte-matches the written task record for each tier.
+- `TestShowInspectNeverLeaksAboveCurrentTier` - show/inspect projects stale higher-tier files down to current tier.
+- `TestShowOnNonexistentOrCorruptRecord` - missing/corrupt records fail cleanly with no panic and no partial cleartext dump.
+- `TestE2EDeclineNeverReprompts` - declined tiers do not reprompt and do not capture higher-tier content.
+- `TestE2ENoticePrecedesCapture` - notice is emitted before first append and names kill-switch plus consent.
+- `TestE2EDowngradePurges` - downgrade to hashes-only removes planted cleartext across the whole store while hashes survive.
+- `TestDowngradePurgeRemovesAllPerSessionArtifacts` - purge walks the whole store, including companions, quarantine, claims, and temp residue.
+- `TestDowngradePurgeLeavesNoTempResidueOnInterrupt` - injected purge write failure leaves original intact and no temp residue.
+- `TestDowngradePurgeIsIdempotentAndPartialResumable` - repeated and partially completed purges converge.
+- `TestDowngradeWhileConcurrentCaptureWrites` - concurrent downgrade and capture never leave higher-tier terminal state.
+- `TestPerRepoDowngradePurgesOnlyThatRepo` - per-repo downgrade purges only matching remote hash.
+- `TestNoCleartextOnDiskPerTier` - whole-store grep ensures planted prompt/code/secret fragments are absent wherever disallowed.
+- `TestKillSwitchPrecedence` - every kill-switch independently produces zero capture and correct precedence.
+- `TestKillSwitchWritesNoTaskRecord` - kill-switch cases create no task directory or task file.
+- `TestKillSwitchBeatsExplicitFullConsent` - explicit full consent cannot override env/config disable.
+- `TestEmptyGarbageZeroFalseEnvDoesNotDisable` - only literal `1` disables `PROOFSWE_OFF` and `DO_NOT_TRACK`.
+- `TestReservationOverridesUserConsent` - repo ignore or DNT overrides user full consent.
+- `TestConsentTTYGating` - non-TTY bare `consent` prints state/guidance and exits non-zero without blocking.
+- `TestDefaultTierScrubberNeverInvoked` - hashes-only capture never invokes scrubber.
+- `TestWorkForHireRepoScope` - private/enterprise repos never write raw code; public permissive repos may.
+- `TestLicenseAllowlistGate` - only permissive SPDX allowlist permits raw code.
+- `TestProvenanceCompletenessRequired` - code blobs without base commit, remote, or license are rejected.
+- `TestAuthorPIIMinimized` - repo linkage omits raw author name/email by default.
+- `TestTaskIDPathCannotEscapeTasksDir` - hostile task/session IDs resolve inside `~/.proofswe/tasks`.
+- `TestCaptureRefusesToFollowSymlinkedTaskFile` - task writes do not follow pre-existing task-file symlinks.
+- `TestRepoRelativePathGuardRejectsAbsoluteAndDotDot` - repo-relative path guard rejects absolute and traversal paths.
+- `TestConcurrentCaptureNoCorruption` - racing hooks plus salt creation produce valid JSON and one valid salt.
+- `TestConcurrentTaskWriteNoTornFile` - racing task writers leave a complete valid `Task`.
+- `TestTaskWriteAtomicLeavesNoTempOnWriteError` - injected task write failure leaves no `.tmp-task.json-*` residue.
+- `TestTaskDirCreatedWith0700` - non-Windows task directories are `0700`.
+- `TestTaskFilePermissions` - non-Windows `task.json` and `consent.json` are `0600`.
+- `TestConsentFilePermissionsCrossPlatform` - non-Windows config is `0600`.
+- `TestAtomicWriteLeavesNoTempFile` - success and simulated failure leave no atomic-write or salt temp residue.
+- `TestParserMatrixBothDecoders` - parser/redaction suite runs under stdlib JSON and `proofswe_fastjson`.
+- `TestParserMatrixBothDecodersAgreeOnRedaction` - duplicate-key/large-integer transcript produces byte-identical task records across decoder paths.
+- `TestContentTierCaptureUsesNoScanner` - live transcript content-tier reader uses `bufio.Reader.ReadBytes('\n')` and introduces no live-transcript `bufio.Scanner`.
+- Heavy gated tests: `TestTaskCaptureConstantMemory`, `TestRedactRecallFloor`, and `TestRedactRecallFloorIsEnforcedNotSkipped`.
+
+## Smoke Tests
+- `go test ./...` passes.
+- `go test -short ./...` passes without long fixture lanes.
+- `go test -race ./internal/cli ./internal/hashing` passes for race-sensitive task and salt paths.
+- `go test -run 'TestTask|TestProject|TestTier|TestConsent|TestRedact|TestShow|TestKillSwitch' ./...` passes.
+- `go build ./...` passes.
+- `gofumpt -l .` prints no files.
+- `golangci-lint run` passes.
+- `govulncheck ./...` passes.
+- Build `./proofswe` and run `hyperfine --shell=none './proofswe status'`; p95 remains below 50 ms.
+- CI/source grep confirms no `mmap` calls and no new live-transcript `bufio.Scanner` usage.
+
+## E2E Tests
+- In a temporary home directory with no consent config, run a hook `SessionStart` then `SessionEnd`/`Stop` over a fixture session; verify notice precedes capture, `pending/<id>.json` exists, `tasks/<id>/task.json` exists, and whole-store grep finds none of the planted prompt/code/remote cleartext.
+- Run `proofswe consent set --tier=prompts`, capture a fixture, and verify the task record includes scrubbed prompt text but no action/code/repo-linkage cleartext.
+- Run `proofswe consent enable tool-calls`, capture a fixture, and verify only the enabled granular categories are cleartext.
+- Run `proofswe consent set --tier=code` against private, no-license, copyleft, and public permissive temp repos; raw code appears only for public permissive provenance-complete cases.
+- Run `proofswe show <session>` and `proofswe inspect <session>` at each tier and compare bytes to the corresponding capture-path task JSON.
+- Downgrade from `full` to `hashes-only`; whole-store grep under the temp `.proofswe` store finds no planted cleartext, and a subsequent hook does not reprompt.
+
+## Manual / cURL Tests
+- `PROOFSWE_HOME=$(mktemp -d) go run ./cmd/proofswe -- status` shows enabled state and the default-tier guarantee.
+- `PROOFSWE_HOME=$(mktemp -d) go run ./cmd/proofswe -- consent` from non-TTY prints current state/guidance and exits non-zero rather than waiting for input.
+- `PROOFSWE_HOME=$(mktemp -d) go run ./cmd/proofswe -- consent set --tier=prompts` writes `config` and `consent.json` as `0600`; `consent show` reports the grant.
+- `PROOFSWE_HOME=$(mktemp -d) go run ./cmd/proofswe -- consent set --tier=hashes-only` after a higher-tier capture purges higher-tier cleartext.
+- `PROOFSWE_OFF=1 go run ./cmd/proofswe -- hook claudecode SessionStart` exits 0 with no task record.
+- `DO_NOT_TRACK=1 go run ./cmd/proofswe -- hook codex SessionStart` exits 0 with no task record.
+- No cURL tests are applicable because issue #24 is local-only and must not add upload/network behavior.
