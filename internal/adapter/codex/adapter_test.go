@@ -165,6 +165,54 @@ func TestTokenMetricsAttachUnderRealisticOrdering(t *testing.T) {
 	}
 }
 
+// Regression: on real rollouts token_count frequently lands AFTER task_complete,
+// and many turns share a single end-of-session token_count. The held-assistant
+// design must still capture the full token total (it must NOT flush on task
+// boundaries) and attribute each turn's usage to that turn's assistant.
+func TestTokenMetricsCapturedWhenTokenCountFollowsTaskComplete(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout-2026-06-01T00-00-00-s.jsonl")
+	lines := []string{
+		`{"timestamp":"2026-06-01T00:00:00Z","type":"session_meta","payload":{"id":"s","cwd":"/w","git":{"branch":"main"}}}`,
+		`{"timestamp":"2026-06-01T00:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}`,
+		`{"timestamp":"2026-06-01T00:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first"}]}}`,
+		// token_count AFTER task_complete (the ordering the old logic dropped)
+		`{"timestamp":"2026-06-01T00:00:03Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}`,
+		`{"timestamp":"2026-06-01T00:00:04Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":20}}}}`,
+		`{"timestamp":"2026-06-01T00:00:05Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"again"}]}}`,
+		`{"timestamp":"2026-06-01T00:00:06Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"second"}]}}`,
+		`{"timestamp":"2026-06-01T00:00:07Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t2"}}`,
+		`{"timestamp":"2026-06-01T00:00:08Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"output_tokens":10}}}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	events, err := ParseFile(testSalt, path)
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	var sumInput, sumOutput int64
+	var assistants int
+	for _, e := range events {
+		if a, ok := e.(*core.AssistantMessage); ok {
+			assistants++
+			sumInput += a.Metrics.InputTokens
+			sumOutput += a.Metrics.OutputTokens
+		}
+	}
+	if assistants != 2 {
+		t.Fatalf("assistant messages = %d, want 2", assistants)
+	}
+	if sumInput != 150 {
+		t.Fatalf("sum InputTokens = %d, want 150 (100 + 50 captured despite token_count after task_complete)", sumInput)
+	}
+	if sumOutput != 30 {
+		t.Fatalf("sum OutputTokens = %d, want 30", sumOutput)
+	}
+}
+
 func TestResponseItemKindsMapToEventsOrUnknown(t *testing.T) {
 	cases := []struct {
 		name string

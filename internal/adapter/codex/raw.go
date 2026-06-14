@@ -12,20 +12,27 @@ import (
 )
 
 type parser struct {
-	h       hasher
-	path    string
-	state   rolloutState
-	pending []core.NormalizedEvent
+	h     hasher
+	path  string
+	state rolloutState
+	// held is the most-recent assistant message, kept back (O(1), exactly one)
+	// until the next assistant / user prompt / session boundary / EOF so an
+	// end-of-turn token_count can attach to it. We never buffer the whole turn —
+	// that would make memory grow with the transcript and break the constant-
+	// memory invariant for multi-hundred-MB rollouts.
+	held *core.AssistantMessage
+	// carry holds token deltas seen before any assistant was available to receive
+	// them; drained onto the next held assistant.
+	carry core.Metrics
 }
 
 type rolloutState struct {
-	sessionID   core.SessionId
-	cwd         string
-	gitBranch   string
-	model       core.ModelId
-	turnID      string
-	turnIndex   int
-	nextMetrics core.Metrics
+	sessionID core.SessionId
+	cwd       string
+	gitBranch string
+	model     core.ModelId
+	turnID    string
+	turnIndex int
 }
 
 func newParser(salt []byte, path string) *parser {
@@ -49,12 +56,53 @@ func (p *parser) Parse(data []byte) ([]core.NormalizedEvent, error) {
 }
 
 func (p *parser) Flush() []core.NormalizedEvent {
-	if len(p.pending) == 0 {
+	return p.flushHeld()
+}
+
+// flushHeld emits the held assistant message (if any). Called at turn / session
+// boundaries and at EOF so the last assistant of every turn is emitted exactly
+// once, after any end-of-turn token_count has been folded into its metrics.
+func (p *parser) flushHeld() []core.NormalizedEvent {
+	if p.held == nil {
 		return nil
 	}
-	events := p.pending
-	p.pending = nil
-	return events
+	msg := p.held
+	p.held = nil
+	return []core.NormalizedEvent{msg}
+}
+
+// holdAssistant emits the previously-held assistant and holds the new one,
+// draining any carried token deltas onto it.
+func (p *parser) holdAssistant(msg *core.AssistantMessage) []core.NormalizedEvent {
+	emitted := p.flushHeld()
+	msg.Metrics = addMetrics(msg.Metrics, p.carry)
+	p.carry = core.Metrics{}
+	p.held = msg
+	return emitted
+}
+
+// addTurnMetrics folds an end-of-turn token_count delta into the held assistant
+// (or carries it forward if none is held yet). Deltas accumulate, so multiple
+// token_counts in one turn sum correctly and never double-count the cumulative.
+func (p *parser) addTurnMetrics(delta core.Metrics) {
+	if delta == (core.Metrics{}) {
+		return
+	}
+	if p.held != nil {
+		p.held.Metrics = addMetrics(p.held.Metrics, delta)
+		return
+	}
+	p.carry = addMetrics(p.carry, delta)
+}
+
+func addMetrics(a, b core.Metrics) core.Metrics {
+	return core.Metrics{
+		InputTokens:              a.InputTokens + b.InputTokens,
+		OutputTokens:             a.OutputTokens + b.OutputTokens,
+		CacheCreationInputTokens: a.CacheCreationInputTokens + b.CacheCreationInputTokens,
+		CacheReadInputTokens:     a.CacheReadInputTokens + b.CacheReadInputTokens,
+		DurationMS:               a.DurationMS + b.DurationMS,
+	}
 }
 
 func (p *parser) setState(state rolloutState) {
@@ -245,14 +293,16 @@ func normalizeEventMsg(ts string, raw rawEventMsg, p *parser) []core.NormalizedE
 		p.state.turnID = raw.TurnID
 	}
 	switch raw.Type {
-	case "task_started":
-		return p.Flush()
-	case "token_count":
-		p.applyMetrics(metricsFromTokenUsage(raw.Info.LastTokenUsage))
+	case "task_started", "task_complete":
+		// Turn boundaries: do NOT flush the held assistant. token_count usually
+		// arrives around here, and the held assistant must still be available to
+		// receive it; it is flushed by the next assistant / user prompt / EOF.
 		return nil
-	case "task_complete":
-		return p.Flush()
+	case "token_count":
+		p.addTurnMetrics(metricsFromTokenUsage(raw.Info.LastTokenUsage))
+		return nil
 	case "agent_message", "user_message":
+		// Redundant with response_item/message; skip rather than emit Unknown noise.
 		return nil
 	default:
 		return []core.NormalizedEvent{core.Unknown{Type: core.EventType("event_msg." + raw.Type), Raw: sanitizedUnknown("event_msg." + raw.Type)}}
@@ -264,39 +314,36 @@ func normalizeResponseItem(ts string, raw rawResponseItem, p *parser) []core.Nor
 	case "message":
 		switch raw.Role {
 		case "user":
+			// A user prompt opens a new turn: flush the prior turn's held assistant.
+			events := p.flushHeld()
 			hash := messageContentHash(p.h, raw.Content)
 			if hash == "" {
-				return nil
+				return events
 			}
-			p.pending = append(p.pending, &core.UserPrompt{Envelope: p.envelope(core.EventTypeUserPrompt, ts, ""), PromptHash: hash})
-			return nil
+			return append(events, &core.UserPrompt{Envelope: p.envelope(core.EventTypeUserPrompt, ts, ""), PromptHash: hash})
 		case "assistant":
 			hash := messageContentHash(p.h, raw.Content)
 			if hash == "" {
 				return nil
 			}
 			env := p.envelope(core.EventTypeAssistantMessage, ts, "")
-			env.Metrics = p.takeMetrics()
-			p.pending = append(p.pending, &core.AssistantMessage{Envelope: env, MessageHash: hash})
-			return nil
+			return p.holdAssistant(&core.AssistantMessage{Envelope: env, MessageHash: hash})
 		default:
 			return []core.NormalizedEvent{core.Unknown{Type: core.EventType("response_item.message." + raw.Role), Raw: sanitizedUnknown("response_item.message." + raw.Role)}}
 		}
 	case "function_call", "custom_tool_call", "web_search_call", "tool_search_call":
-		p.pending = append(p.pending, &core.ToolCall{
+		return []core.NormalizedEvent{&core.ToolCall{
 			Envelope:   p.envelope(core.EventTypeToolCall, ts, raw.CallID),
 			ToolCallID: core.ToolCallId(raw.CallID),
 			Name:       raw.Name,
 			Arguments:  sanitizedToolInput(p.h, raw.Arguments),
-		})
-		return nil
+		}}
 	case "function_call_output", "custom_tool_call_output", "web_search_output", "tool_search_output":
-		p.pending = append(p.pending, &core.ToolResult{
+		return []core.NormalizedEvent{&core.ToolResult{
 			Envelope:   p.envelope(core.EventTypeToolResult, ts, raw.CallID),
 			ToolCallID: core.ToolCallId(raw.CallID),
 			Result:     sanitizedToolOutput(p.h, raw.Output),
-		})
-		return nil
+		}}
 	case "reasoning":
 		return nil
 	default:
@@ -334,27 +381,6 @@ func (p *parser) envelope(eventType core.EventType, ts string, eventID string) c
 		env.Model = core.ModelMeta{}
 	}
 	return env
-}
-
-func (p *parser) takeMetrics() core.Metrics {
-	metrics := p.state.nextMetrics
-	p.state.nextMetrics = core.Metrics{}
-	return metrics
-}
-
-func (p *parser) applyMetrics(metrics core.Metrics) {
-	if metrics == (core.Metrics{}) {
-		return
-	}
-	for i := len(p.pending) - 1; i >= 0; i-- {
-		assistant, ok := p.pending[i].(*core.AssistantMessage)
-		if !ok {
-			continue
-		}
-		assistant.Metrics = metrics
-		return
-	}
-	p.state.nextMetrics = metrics
 }
 
 func metricsFromTokenUsage(usage rawTokenUsage) core.Metrics {

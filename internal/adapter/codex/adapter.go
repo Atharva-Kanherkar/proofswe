@@ -378,11 +378,14 @@ func captureTranscript(transcript Transcript, salt []byte, stateDir string, logg
 			return false
 		}
 	}
-	if saveErr := reader.SaveCursor(cursorFile, stats.Cursor); saveErr != nil && logger != nil {
-		logger.Warn("save rollout cursor", "path", transcript.Path, "error", saveErr)
-	}
+	// Persist parser state before the cursor: if we crash between the two, the
+	// next pass re-reads from the older cursor with restored metadata rather than
+	// reading new bytes against stale (or empty) session state.
 	if saveErr := saveParserState(parserStatePath(stateDir, transcript.Path), parser.state); saveErr != nil && logger != nil {
 		logger.Warn("save codex parser state", "path", transcript.Path, "error", saveErr)
+	}
+	if saveErr := reader.SaveCursor(cursorFile, stats.Cursor); saveErr != nil && logger != nil {
+		logger.Warn("save rollout cursor", "path", transcript.Path, "error", saveErr)
 	}
 	return true
 }

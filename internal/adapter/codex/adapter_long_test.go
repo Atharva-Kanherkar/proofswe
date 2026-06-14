@@ -1,5 +1,3 @@
-//go:build !windows
-
 package codex
 
 import (
@@ -8,19 +6,22 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/core"
 )
 
+// TestCaptureConstantMemoryLargeRollout guards Invariant 4: capture memory must
+// stay constant regardless of transcript size. It synthesizes a rollout whose
+// single turn never closes (no task boundary, so nothing can be flushed early)
+// and asserts peak Go heap stays far below the file size. Skipped under -short.
 func TestCaptureConstantMemoryLargeRollout(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping multi-hundred-MB Codex rollout test in short mode")
+		t.Skip("skipping large-rollout streaming test in short mode")
 	}
-	if os.Getenv("PROOFSWE_RUN_LONG_CODEX_TEST") != "1" {
-		t.Skip("set PROOFSWE_RUN_LONG_CODEX_TEST=1 to synthesize a multi-hundred-MB rollout")
-	}
+
+	const fileBytes int64 = 96 << 20 // 96 MB on one open turn
+	const heapBudgetMB = 32          // O(1) capture stays tiny; buffering the turn would blow past this
 
 	root := t.TempDir()
 	state := t.TempDir()
@@ -28,27 +29,36 @@ func TestCaptureConstantMemoryLargeRollout(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
-
-	const targetBytes int64 = 256 << 20
-	line := paddedUserMessageLine(1024)
-	writeRepeatedLine(t, path, line, targetBytes)
+	writeRepeatedLine(t, path, paddedUserMessageLine(1024), fileBytes)
 
 	adapter := Adapter{Root: root, StateDir: state}
 	var emitted int
+	var peakHeap uint64
+	var ms runtime.MemStats
 	for event := range adapter.Capture(core.CaptureTriggerStop) {
 		if event.EventType() != core.EventTypeUserPrompt {
 			t.Fatalf("event type = %q, want %q", event.EventType(), core.EventTypeUserPrompt)
 		}
 		emitted++
+		if emitted%20000 == 0 {
+			runtime.ReadMemStats(&ms)
+			if ms.HeapInuse > peakHeap {
+				peakHeap = ms.HeapInuse
+			}
+		}
 	}
 	if emitted == 0 {
 		t.Fatal("emitted = 0, want events")
 	}
 
-	runtime.GC()
-	maxRSSMB := maxRSSMegabytes(t)
-	if maxRSSMB > 75 {
-		t.Fatalf("max RSS = %d MB, want <= 75 MB", maxRSSMB)
+	runtime.ReadMemStats(&ms)
+	if ms.HeapInuse > peakHeap {
+		peakHeap = ms.HeapInuse
+	}
+	peakMB := peakHeap >> 20
+	if peakMB > heapBudgetMB {
+		t.Fatalf("peak heap = %d MB on a %d MB rollout, want <= %d MB (capture must not buffer the transcript)",
+			peakMB, fileBytes>>20, heapBudgetMB)
 	}
 }
 
@@ -80,13 +90,4 @@ func writeRepeatedLine(t *testing.T, path string, line string, targetBytes int64
 	if err := file.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-}
-
-func maxRSSMegabytes(t *testing.T) int64 {
-	t.Helper()
-	var usage syscall.Rusage
-	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
-		t.Fatalf("Getrusage() error = %v", err)
-	}
-	return usage.Maxrss / 1024
 }
