@@ -182,10 +182,6 @@ func gitRepoRootContext(ctx context.Context, cwd string) (string, bool) {
 // (tracked files) plus the full contents of untracked, non-ignored files. Paths
 // are repo-relative. Committed-during-session changes need a session-start baseline
 // and are deferred (see the scope-metric open decision).
-func gitAddedLines(root string) ([]lineRef, error) {
-	return gitAddedLinesContext(context.Background(), root)
-}
-
 func gitAddedLinesContext(ctx context.Context, root string) ([]lineRef, error) {
 	var refs []lineRef
 

@@ -14,7 +14,8 @@ import (
 )
 
 func TestReadNewYieldsFixtureRecords(t *testing.T) {
-	path := writeJSONL(t,
+	path := writeJSONL(
+		t,
 		eventLine(core.EventTypeSessionStart, "a"),
 		eventLine(core.EventTypeUserPrompt, "b"),
 		eventLine(core.EventTypeSessionEnd, "c"),
@@ -40,7 +41,8 @@ func TestReadNewYieldsFixtureRecords(t *testing.T) {
 }
 
 func TestReadNewResumesFromPersistedCursor(t *testing.T) {
-	path := writeJSONL(t,
+	path := writeJSONL(
+		t,
 		eventLine(core.EventTypeSessionStart, "a"),
 		eventLine(core.EventTypeUserPrompt, "b"),
 	)
@@ -49,7 +51,8 @@ func TestReadNewResumesFromPersistedCursor(t *testing.T) {
 		t.Fatalf("first len(Events) = %d, want 2", len(first.Events))
 	}
 
-	appendJSONL(t, path,
+	appendJSONL(
+		t, path,
 		eventLine(core.EventTypeToolCall, "c"),
 		eventLine(core.EventTypeSessionEnd, "d"),
 	)
@@ -96,7 +99,8 @@ func TestReadNewLeavesCursorBeforePartialLine(t *testing.T) {
 }
 
 func TestReadNewSkipsMalformedLineAndLogs(t *testing.T) {
-	path := writeJSONL(t,
+	path := writeJSONL(
+		t,
 		eventLine(core.EventTypeSessionStart, "a"),
 		`{"schema_version":1,"type":`,
 		eventLine(core.EventTypeSessionEnd, "b"),
@@ -121,7 +125,8 @@ func TestReadNewSkipsMalformedLineAndLogs(t *testing.T) {
 }
 
 func TestReadNewSkipsBlankLinesSilently(t *testing.T) {
-	path := writeJSONL(t,
+	path := writeJSONL(
+		t,
 		eventLine(core.EventTypeSessionStart, "a"),
 		"",
 		"   ",
@@ -170,7 +175,8 @@ func TestCursorPersistenceRoundTripsAndMissingIsZero(t *testing.T) {
 }
 
 func TestReadNewMaxLineGuardSkipsOversizedCompleteLine(t *testing.T) {
-	path := writeJSONL(t,
+	path := writeJSONL(
+		t,
 		eventLine(core.EventTypeSessionStart, "a"),
 		`{"schema_version":1,"type":"user_prompt","payload":"`+strings.Repeat("x", 128)+`"}`,
 		eventLine(core.EventTypeSessionEnd, "b"),
@@ -213,7 +219,8 @@ func TestReadNewOversizedPartialDoesNotAdvanceCursor(t *testing.T) {
 }
 
 func TestReadNewEmitErrorDoesNotAdvancePastEvent(t *testing.T) {
-	path := writeJSONL(t,
+	path := writeJSONL(
+		t,
 		eventLine(core.EventTypeSessionStart, "a"),
 		eventLine(core.EventTypeSessionEnd, "b"),
 	)

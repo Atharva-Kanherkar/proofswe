@@ -186,6 +186,8 @@ func MaxConsentTier(a, b ConsentTier) ConsentTier {
 
 func CategoriesForTier(tier ConsentTier) []ConsentCategory {
 	switch NormalizeConsentTier(tier) {
+	case ConsentTierHashesOnly:
+		return nil
 	case ConsentTierPrompts:
 		return append([]ConsentCategory(nil), orderedCategories[:2]...)
 	case ConsentTierActions:
@@ -236,24 +238,24 @@ func ProjectWithCategories(task Task, tier ConsentTier, categories []ConsentCate
 		}
 	}
 
-	if !(allowed[CategoryAssistantMsgs] || allowed[CategoryFullTranscript]) {
+	if !allowed[CategoryAssistantMsgs] && !allowed[CategoryFullTranscript] {
 		blankTaskTexts(task.Trajectory.AssistantMessages)
 	}
-	if !(allowed[CategoryToolCalls] || allowed[CategoryFullTranscript]) {
+	if !allowed[CategoryToolCalls] && !allowed[CategoryFullTranscript] {
 		blankTaskTexts(task.Trajectory.ToolCalls)
 	}
-	if !(allowed[CategoryToolOutputs] || allowed[CategoryFullTranscript]) {
+	if !allowed[CategoryToolOutputs] && !allowed[CategoryFullTranscript] {
 		blankTaskTexts(task.Trajectory.ToolOutputs)
 	}
 
-	if !(allowed[CategoryCodeDiffs] || allowed[CategoryFullTranscript]) {
+	if !allowed[CategoryCodeDiffs] && !allowed[CategoryFullTranscript] {
 		task.Code.Patch = ""
 		task.Code.TestPatch = ""
 		for i := range task.Code.Files {
 			task.Code.Files[i].Path = ""
 		}
 	}
-	if !(allowed[CategoryRepoLinkage] || allowed[CategoryFullTranscript]) {
+	if !allowed[CategoryRepoLinkage] && !allowed[CategoryFullTranscript] {
 		task.Repo.RemoteURL = ""
 		task.Repo.BaseCommit = ""
 		task.Repo.BaseCommitCommittedAt = ""

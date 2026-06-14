@@ -228,6 +228,9 @@ func FuzzProjectNeverWidensTier(f *testing.F) {
 			if got.Code.Patch != "" || got.Repo.RemoteURL != "" {
 				t.Fatalf("actions widened: %+v", got)
 			}
+		case ConsentTierCode, ConsentTierFull:
+			// These tiers may keep code/repo fields; the lower-tier cases above
+			// pin the no-widening property.
 		}
 	})
 }

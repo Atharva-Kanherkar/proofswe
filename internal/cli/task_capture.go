@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -196,7 +195,7 @@ func buildCodeRecord(diff []byte, added []lineRef, h hashing.Hasher, categories 
 	sort.Slice(files, func(i, j int) bool { return files[i].PathHash < files[j].PathHash })
 
 	code := core.TaskCode{Files: files}
-	if len(diff) == 0 || !codeAllowed || !(categoryAllowed(categories, core.CategoryCodeDiffs) || categoryAllowed(categories, core.CategoryFullTranscript)) {
+	if len(diff) == 0 || !codeAllowed || (!categoryAllowed(categories, core.CategoryCodeDiffs) && !categoryAllowed(categories, core.CategoryFullTranscript)) {
 		return code, report
 	}
 	patch, testPatch := splitPatchByRole(string(diff))
@@ -540,9 +539,4 @@ func referencesExternalContext(prompts []string) bool {
 		}
 	}
 	return false
-}
-
-func taskFileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil || !errors.Is(err, os.ErrNotExist)
 }
