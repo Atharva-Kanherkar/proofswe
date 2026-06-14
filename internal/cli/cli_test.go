@@ -36,19 +36,27 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestDefaultAdaptersIncludesClaudeCode(t *testing.T) {
+func TestDefaultAdaptersIncludesSupportedHarnesses(t *testing.T) {
 	adapters := defaultAdapters()
-	if len(adapters) != 1 {
-		t.Fatalf("len(defaultAdapters()) = %d, want 1", len(adapters))
+	if len(adapters) != 2 {
+		t.Fatalf("len(defaultAdapters()) = %d, want 2", len(adapters))
 	}
 
-	var found bool
+	found := map[string]bool{
+		"claudecode": false,
+		"codex":      false,
+	}
 	for _, adapter := range adapters {
-		if adapterType := fmt.Sprintf("%T", adapter); adapterType == "claudecode.Adapter" || strings.Contains(adapterType, "/claudecode.") {
-			found = true
+		adapterType := fmt.Sprintf("%T", adapter)
+		for name := range found {
+			if adapterType == name+".Adapter" || strings.Contains(adapterType, "/"+name+".") {
+				found[name] = true
+			}
 		}
 	}
-	if !found {
-		t.Fatalf("defaultAdapters() = %#v, want Claude Code adapter", adapters)
+	for name, ok := range found {
+		if !ok {
+			t.Fatalf("defaultAdapters() = %#v, want %s adapter", adapters, name)
+		}
 	}
 }
