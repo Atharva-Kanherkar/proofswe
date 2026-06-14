@@ -21,8 +21,8 @@ func TestRunStatus(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := stdout.String(), "proofswe scaffold ready\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	if got := stdout.String(); !strings.Contains(got, "enabled: true") || !strings.Contains(got, "claudecode hooks:") || !strings.Contains(got, "codex hooks:") {
+		t.Fatalf("stdout = %q, want status output", got)
 	}
 }
 

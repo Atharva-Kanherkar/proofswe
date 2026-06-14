@@ -3,13 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 )
 
 func TestRunVersion(t *testing.T) {
 	var stdout bytes.Buffer
+	var stderr bytes.Buffer
 
-	err := run(context.Background(), []string{"version"}, &stdout)
+	err := run(context.Background(), []string{"version"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -21,13 +23,14 @@ func TestRunVersion(t *testing.T) {
 
 func TestRunDropsGoRunSeparator(t *testing.T) {
 	var stdout bytes.Buffer
+	var stderr bytes.Buffer
 
-	err := run(context.Background(), []string{"--", "status"}, &stdout)
+	err := run(context.Background(), []string{"--", "status"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
 
-	if got, want := stdout.String(), "proofswe scaffold ready\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	if got := stdout.String(); !strings.Contains(got, "enabled: true") {
+		t.Fatalf("stdout = %q, want status output", got)
 	}
 }
