@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -27,7 +28,7 @@ func TestRunDropsGoRunSeparator(t *testing.T) {
 		t.Fatalf("run() error = %v", err)
 	}
 
-	if got, want := stdout.String(), "proofswe scaffold ready\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	if got := stdout.String(); !strings.Contains(got, "enabled: true") {
+		t.Fatalf("stdout = %q, want status output", got)
 	}
 }
