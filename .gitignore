@@ -9,6 +9,8 @@
 # Local data (proofswe stores datapoints under here; never commit real sessions)
 .proofswe/
 *.jsonl
+# ...but synthetic test fixtures under testdata/ must be tracked.
+!**/testdata/**/*.jsonl
 
 # Build artifacts (Go binary lands here once implementation starts)
 .ci-bin/
