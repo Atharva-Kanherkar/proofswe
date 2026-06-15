@@ -97,7 +97,8 @@ func TestResolveKeeprateAndCommittedFromWorkingTreeAndHEAD(t *testing.T) {
 	commitAll(t, repo, "agent line landed")
 	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nCOMMITTED_LINE\nWORKTREE_LINE\n")
 
-	record := pendingForTest(h, repo, "sess-1", now.Add(-25*time.Hour),
+	record := pendingForTest(
+		h, repo, "sess-1", now.Add(-25*time.Hour),
 		lineRef{path: "keep.txt", text: "COMMITTED_LINE"},
 		lineRef{path: "keep.txt", text: "WORKTREE_LINE"},
 		lineRef{path: "keep.txt", text: "MISSING_LINE"},
@@ -159,7 +160,8 @@ func TestResolveCountsDuplicateLinesAsMultiset(t *testing.T) {
 	now := time.Unix(1_700_100_000, 0).UTC()
 
 	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nDUPLICATE\n")
-	record := pendingForTest(h, repo, "dups", now.Add(-25*time.Hour),
+	record := pendingForTest(
+		h, repo, "dups", now.Add(-25*time.Hour),
 		lineRef{path: "keep.txt", text: "DUPLICATE"},
 		lineRef{path: "keep.txt", text: "DUPLICATE"},
 	)
@@ -181,7 +183,8 @@ func TestResolveRespectsMaturityWindow(t *testing.T) {
 	cfg, h := snapshotConfig(t, repo)
 	now := time.Unix(1_700_100_000, 0).UTC()
 
-	record := pendingForTest(h, repo, "young", now.Add(-time.Hour),
+	record := pendingForTest(
+		h, repo, "young", now.Add(-time.Hour),
 		lineRef{path: "keep.txt", text: "line1"},
 	)
 	writePendingRecord(t, cfg, "young", record)
@@ -204,7 +207,8 @@ func TestResolveRenamedLineDoesNotSurvive(t *testing.T) {
 	cfg, h := snapshotConfig(t, repo)
 	now := time.Unix(1_700_100_000, 0).UTC()
 
-	record := pendingForTest(h, repo, "rename", now.Add(-25*time.Hour),
+	record := pendingForTest(
+		h, repo, "rename", now.Add(-25*time.Hour),
 		lineRef{path: "old.txt", text: "SAME_LINE"},
 	)
 	writePendingRecord(t, cfg, "rename", record)
@@ -226,7 +230,8 @@ func TestResolveClaimsPendingRecordBeforeAppend(t *testing.T) {
 	cfg, h := snapshotConfig(t, repo)
 	now := time.Unix(1_700_100_000, 0).UTC()
 
-	record := pendingForTest(h, repo, "claimed", now.Add(-25*time.Hour),
+	record := pendingForTest(
+		h, repo, "claimed", now.Add(-25*time.Hour),
 		lineRef{path: "keep.txt", text: "line1"},
 	)
 	path := pendingRecordPath(cfg, "claimed")
@@ -255,7 +260,8 @@ func TestResolveMissingClaimedRecordSkipsAsLostRace(t *testing.T) {
 	cfg, h := snapshotConfig(t, repo)
 	now := time.Unix(1_700_100_000, 0).UTC()
 
-	record := pendingForTest(h, repo, "vanished", now.Add(-25*time.Hour),
+	record := pendingForTest(
+		h, repo, "vanished", now.Add(-25*time.Hour),
 		lineRef{path: "keep.txt", text: "line1"},
 	)
 	path := pendingRecordPath(cfg, "vanished")
@@ -286,7 +292,8 @@ func TestResolveConcurrentClaimsEmitOneDatapoint(t *testing.T) {
 	cfg, h := snapshotConfig(t, repo)
 	now := time.Unix(1_700_100_000, 0).UTC()
 
-	record := pendingForTest(h, repo, "concurrent", now.Add(-25*time.Hour),
+	record := pendingForTest(
+		h, repo, "concurrent", now.Add(-25*time.Hour),
 		lineRef{path: "keep.txt", text: "line1"},
 	)
 	writePendingRecord(t, cfg, "concurrent", record)
@@ -373,7 +380,8 @@ func TestResolveQuarantinesZeroCapturedAt(t *testing.T) {
 	cfg, h := snapshotConfig(t, repo)
 	now := time.Unix(1_700_100_000, 0).UTC()
 
-	record := pendingForTest(h, repo, "zero-time", time.Time{},
+	record := pendingForTest(
+		h, repo, "zero-time", time.Time{},
 		lineRef{path: "keep.txt", text: "line1"},
 	)
 	writePendingRecord(t, cfg, "zero-time", record)
@@ -395,7 +403,8 @@ func TestResolveCommandUsesSamePath(t *testing.T) {
 	repo := t.TempDir()
 	initRepo(t, repo)
 	cfg, h := snapshotConfig(t, repo)
-	record := pendingForTest(h, repo, "cmd", time.Unix(1_700_000_000, 0),
+	record := pendingForTest(
+		h, repo, "cmd", time.Unix(1_700_000_000, 0),
 		lineRef{path: "keep.txt", text: "line1"},
 	)
 	writePendingRecord(t, cfg, "cmd", record)
@@ -416,7 +425,8 @@ func TestHookSessionStartTriggersResolveAfterNotice(t *testing.T) {
 	initRepo(t, repo)
 	cfg, h := snapshotConfig(t, repo)
 	now := time.Now().UTC()
-	record := pendingForTest(h, repo, "hook-resolve", now.Add(-25*time.Hour),
+	record := pendingForTest(
+		h, repo, "hook-resolve", now.Add(-25*time.Hour),
 		lineRef{path: "keep.txt", text: "line1"},
 	)
 	writePendingRecord(t, cfg, "hook-resolve", record)
@@ -446,7 +456,8 @@ func TestHookSessionStartBoundsResolveWork(t *testing.T) {
 	now := time.Now().UTC()
 	for i := 0; i < hookResolveLimit+1; i++ {
 		sessionID := "hook-bound-" + strconv.Itoa(i)
-		record := pendingForTest(h, repo, sessionID, now.Add(-25*time.Hour),
+		record := pendingForTest(
+			h, repo, sessionID, now.Add(-25*time.Hour),
 			lineRef{path: "keep.txt", text: "line1"},
 		)
 		writePendingRecord(t, cfg, sessionID, record)

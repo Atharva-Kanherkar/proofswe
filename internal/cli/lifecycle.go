@@ -10,12 +10,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	proofsweTag     = "proofswe:v0"
-	noticeLine      = "proofswe observing locally; disable: proofswe off"
+	noticeLine      = "proofswe observing locally; disable: proofswe off; consent: proofswe consent"
 	codexBlockStart = "# BEGIN proofswe:v0 hooks"
 	codexBlockEnd   = "# END proofswe:v0 hooks"
 )
@@ -27,6 +28,7 @@ var (
 	}
 	claudeHookEvents = []string{"SessionStart", "SessionEnd", "Stop"}
 	codexHookEvents  = []string{"SessionStart", "Stop"}
+	atomicWriteLocks sync.Map
 )
 
 func enableHooks(cfg Config) error {
@@ -113,7 +115,7 @@ func runHook(ctx context.Context, cfg Config, args []string) error {
 			_, _ = fmt.Fprintf(cfg.Stderr, "proofswe: snapshot skipped (bad hook input): %v\n", parseErr)
 			return nil
 		}
-		if snapErr := snapshot(cfg, args[0], in, time.Now()); snapErr != nil {
+		if snapErr := snapshotContext(ctx, cfg, args[0], in, time.Now()); snapErr != nil {
 			// Best-effort: capture failures must never disrupt the user's session.
 			_, _ = fmt.Fprintf(cfg.Stderr, "proofswe: snapshot skipped: %v\n", snapErr)
 		}
@@ -138,7 +140,12 @@ func printStatus(cfg Config) error {
 		return fmt.Errorf("read codex hooks: %w", err)
 	}
 
-	_, err = fmt.Fprintf(cfg.Stdout, "enabled: %t\nclaudecode hooks: %s\ncodex hooks: %s\n", enabled, wiredLabel(claudeWired), wiredLabel(codexWired))
+	resolved, consentErr := effectiveConsent(cfg, "")
+	if consentErr != nil {
+		return fmt.Errorf("read proofswe consent: %w", consentErr)
+	}
+
+	_, err = fmt.Fprintf(cfg.Stdout, "enabled: %t\nclaudecode hooks: %s\ncodex hooks: %s\nconsent tier: %s\ndefault guarantee: hashes-only stores no raw prompts, code, remotes, session ids, tool outputs, or patches; use `proofswe consent` to inspect opt-in tiers.\n", enabled, wiredLabel(claudeWired), wiredLabel(codexWired), resolved.Tier)
 	return err
 }
 
@@ -803,6 +810,10 @@ func shellQuoteForOS(s, goos string) string {
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	lock := atomicWriteLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -832,7 +843,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := replaceFile(tmpPath, path); err != nil {
 		return err
 	}
 	cleanup = false
@@ -844,6 +855,36 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	_ = dirFile.Sync()
 	_ = dirFile.Close()
 	return nil
+}
+
+func atomicWriteLock(path string) *sync.Mutex {
+	clean := filepath.Clean(path)
+	if abs, err := filepath.Abs(clean); err == nil {
+		clean = abs
+	}
+	lock, _ := atomicWriteLocks.LoadOrStore(clean, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func replaceFile(tmpPath, path string) error {
+	if err := os.Rename(tmpPath, path); err == nil {
+		return nil
+	} else if runtime.GOOS != "windows" {
+		return err
+	}
+
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			lastErr = err
+		} else if err := os.Rename(tmpPath, path); err != nil {
+			lastErr = err
+		} else {
+			return nil
+		}
+		time.Sleep(time.Duration(i+1) * 10 * time.Millisecond)
+	}
+	return lastErr
 }
 
 func wiredLabel(wired bool) string {
