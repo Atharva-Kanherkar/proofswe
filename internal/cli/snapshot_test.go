@@ -81,14 +81,13 @@ func enableCodeConsent(t *testing.T, cfg Config) {
 	}
 }
 
-// Acceptance 1 + 3: a known diff produces exactly the expected salted line hashes,
-// and the record contains no raw code.
-func TestSnapshotHashesMatchKnownDiffAndStoreNoRawCode(t *testing.T) {
+// Acceptance 1 + 3: the default tier still produces exactly the expected salted
+// line hashes for keeprate, and stores no raw code in the pending/task records.
+func TestDefaultTierCapturesSaltedPendingLineHashes(t *testing.T) {
 	gitAvailable(t)
 	repo := t.TempDir()
 	initRepo(t, repo)
 	cfg, h := snapshotConfig(t, repo)
-	enableCodeConsent(t, cfg)
 
 	// Agent edits a tracked file (adds two lines) and creates an untracked file.
 	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nADDED_ALPHA\n  ADDED_BETA  \n")
@@ -119,10 +118,24 @@ func TestSnapshotHashesMatchKnownDiffAndStoreNoRawCode(t *testing.T) {
 		}
 	}
 
-	// No raw code anywhere in the serialized record.
-	raw, _ := os.ReadFile(pendingRecordPath(cfg, "sess-1"))
+	task, err := findTaskRecordBySession(cfg, "sess-1")
+	if err != nil {
+		t.Fatalf("find task: %v", err)
+	}
+	if task.Code.Patch != "" || task.Code.TestPatch != "" || task.Repo.RemoteURL != "" {
+		t.Fatalf("default task record leaked raw code/repo content: %+v", task)
+	}
+
+	// No raw code anywhere in the serialized pending or task records.
+	pendingRaw, _ := os.ReadFile(pendingRecordPath(cfg, "sess-1"))
+	taskPath, err := taskRecordPath(cfg, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskRaw, _ := os.ReadFile(taskPath)
+	raw := string(pendingRaw) + string(taskRaw)
 	for _, secret := range []string{"ADDED_ALPHA", "ADDED_BETA", "NEW_GAMMA", "NEW_DELTA", "line1"} {
-		if strings.Contains(string(raw), secret) {
+		if strings.Contains(raw, secret) {
 			t.Fatalf("record leaked raw content %q:\n%s", secret, raw)
 		}
 	}

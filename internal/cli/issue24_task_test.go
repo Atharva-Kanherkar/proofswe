@@ -558,7 +558,7 @@ func TestRepoLinkageCaptureMatchesGit(t *testing.T) {
 	}
 }
 
-func TestDefaultTierRunsZeroGitSubprocess(t *testing.T) {
+func TestDefaultTierGitBinaryAbsentDegradesNotErrors(t *testing.T) {
 	gitAvailable(t)
 	repo := t.TempDir()
 	initRepo(t, repo)
@@ -570,7 +570,11 @@ func TestDefaultTierRunsZeroGitSubprocess(t *testing.T) {
 	}
 	defer func() { _ = os.Setenv("PATH", oldPath) }()
 	if err := snapshot(cfg, "codex", hookInput{SessionID: "nogit", CWD: repo}, time.Now()); err != nil {
-		t.Fatalf("default snapshot called git or errored: %v", err)
+		t.Fatalf("default snapshot with missing git errored: %v", err)
+	}
+	rec := readPending(t, cfg, "nogit")
+	if rec.RepoPath != "" || len(rec.Lines) != 0 {
+		t.Fatalf("missing git should degrade to empty pending record: %+v", rec)
 	}
 }
 

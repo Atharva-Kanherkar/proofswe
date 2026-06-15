@@ -53,6 +53,34 @@ func TestRedactCategories(t *testing.T) {
 	}
 }
 
+func TestRedactBareShapeSecrets(t *testing.T) {
+	secrets := []string{
+		"0123456789abcdef0123456789abcdef01234567",
+		"0123456789abcdef0123456789abcdef0123456789abcdef",
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"aB3dE4fG5hJ6kL7mN8pQ9rS0",
+		"MFRGGZDFMZTWQ2LKNNWG23TPOJQXGZJT",
+	}
+	contexts := []string{
+		"%s",
+		"deploy key is %s",
+		`const deployKey = "%s"`,
+		"Authorization bearer replacement %s",
+	}
+	for _, secret := range secrets {
+		for _, format := range contexts {
+			t.Run(secret[:min(len(secret), 16)], func(t *testing.T) {
+				input := strings.Replace(format, "%s", secret, 1)
+				got, report := Scrub(input)
+				assertNoSecret(t, got, secret)
+				if report.SpansRedacted == 0 || report.ByCategory["secret.entropy"] == 0 {
+					t.Fatalf("bare secret did not hit entropy redaction: got=%q report=%+v", got, report)
+				}
+			})
+		}
+	}
+}
+
 func TestRedactNoCategoryRegressesToZero(t *testing.T) {
 	for _, r := range Rules() {
 		if r.Category == "" {
@@ -75,7 +103,6 @@ func TestRedactNoCategoryRegressesToZero(t *testing.T) {
 func TestRedactOverRedactionBounds(t *testing.T) {
 	benign := []string{
 		"550e8400-e29b-41d4-a716-446655440000",
-		"0123456789abcdef0123456789abcdef01234567",
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
 		"lorem ipsum dolor sit amet",
@@ -191,6 +218,8 @@ func TestScrubReplaysCommittedFuzzCorpus(t *testing.T) {
 		"Authorization: Bearer abcdefghijklmnop",
 		"OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456",
 		"postgres://user:pass@example.com/db",
+		"deploy key is 0123456789abcdef0123456789abcdef01234567",
+		`const token = "aB3dE4fG5hJ6kL7mN8pQ9rS0"`,
 	}
 	for _, input := range corpus {
 		t.Run(input[:min(len(input), 20)], func(t *testing.T) {
@@ -212,6 +241,8 @@ func TestRedactRecallFloor(t *testing.T) {
 		"ghp_abcdefghijklmnopqrstuvwxyz123456",
 		"user@example.com",
 		"postgres://user:pass@example.com/db",
+		"0123456789abcdef0123456789abcdef01234567",
+		"aB3dE4fG5hJ6kL7mN8pQ9rS0",
 	}
 	caught := 0
 	for _, secret := range corpus {
@@ -229,8 +260,8 @@ func TestRedactRecallFloorIsEnforcedNotSkipped(t *testing.T) {
 	original := registry
 	defer func() { registry = original }()
 	registry = nil
-	got, _ := Scrub("sk-abcdefghijklmnopqrstuvwxyz123456")
-	if strings.Contains(got, "sk-abcdefghijklmnopqrstuvwxyz123456") {
+	got, _ := Scrub("user@example.com")
+	if strings.Contains(got, "user@example.com") {
 		return
 	}
 	t.Fatalf("recall guard did not fail after dropping registry")
@@ -246,6 +277,19 @@ func FuzzScrubNeverLeaksSecretSubstring(f *testing.F) {
 		}
 		input := ctx + "\npassword=" + secret + "\n"
 		got, _ := Scrub(input)
+		assertNoSecret(t, got, secret)
+	})
+}
+
+func FuzzScrubNeverLeaksBareShapeSecret(f *testing.F) {
+	f.Add("0123456789abcdef0123456789abcdef01234567", "deploy key is")
+	f.Add("aB3dE4fG5hJ6kL7mN8pQ9rS0", "const token =")
+	f.Fuzz(func(t *testing.T, secret, ctx string) {
+		secret = strings.TrimSpace(secret)
+		if len(secret) > 256 || entropyToken.FindString(secret) != secret || allowlisted(secret) || entropyScore(secret) < entropyThreshold {
+			t.Skip()
+		}
+		got, _ := Scrub(ctx + " " + secret + " end")
 		assertNoSecret(t, got, secret)
 	})
 }

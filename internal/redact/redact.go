@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -158,11 +159,13 @@ func ValidateRules() []string {
 	return failures
 }
 
-var entropyToken = regexp.MustCompile(`\b(?:[A-Za-z0-9+/]{36,}={0,2}|[0-9a-fA-F]{32,})\b`)
+const entropyThreshold = 3.6
+
+var entropyToken = regexp.MustCompile(`\b[A-Za-z0-9+/]{16,}={0,2}\b`)
 
 func scrubEntropy(input string, report *Report) string {
 	return entropyToken.ReplaceAllStringFunc(input, func(match string) string {
-		if alreadyRedacted(match) || allowlisted(match) || entropyScore(match) < 3.6 {
+		if alreadyRedacted(match) || allowlisted(match) || entropyScore(match) < entropyThreshold {
 			return match
 		}
 		report.SpansRedacted++
@@ -177,13 +180,12 @@ func alreadyRedacted(s string) bool {
 
 var (
 	uuidRe    = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
-	hexRe     = regexp.MustCompile(`(?i)^[0-9a-f]{32,64}$`)
 	base64PNG = regexp.MustCompile(`^iVBORw0KGgo[A-Za-z0-9+/=]*$`)
 )
 
 func allowlisted(s string) bool {
 	trimmed := strings.TrimSpace(s)
-	return uuidRe.MatchString(trimmed) || hexRe.MatchString(trimmed) || base64PNG.MatchString(trimmed)
+	return uuidRe.MatchString(trimmed) || base64PNG.MatchString(trimmed)
 }
 
 func entropyScore(s string) float64 {
@@ -202,21 +204,9 @@ func entropyScore(s string) float64 {
 	score := 0.0
 	for _, count := range counts {
 		p := float64(count) / float64(total)
-		score -= p * log2(p)
+		score -= p * math.Log2(p)
 	}
 	return score
-}
-
-func log2(v float64) float64 {
-	// Avoid a math import solely to keep this tiny package obviously dependency-light.
-	// The approximation is sufficient for separating repetitive tokens from secrets.
-	if v <= 0 {
-		return 0
-	}
-	x := (v - 1) / (v + 1)
-	x2 := x * x
-	ln := 2 * (x + x*x2/3 + x*x2*x2/5 + x*x2*x2*x2/7 + x*x2*x2*x2*x2/9)
-	return ln / 0.6931471805599453
 }
 
 func NormalizeForLeakCheck(s string) string {

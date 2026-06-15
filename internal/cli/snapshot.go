@@ -97,25 +97,22 @@ func snapshotContext(ctx context.Context, cfg Config, harness string, in hookInp
 		return fmt.Errorf("resolve consent: %w", err)
 	}
 
-	task, taskResolved, err := captureTaskRecord(ctx, cfg, harness, in, now, salt, resolved)
+	task, _, err := captureTaskRecord(ctx, cfg, harness, in, now, salt, resolved)
 	if err != nil {
 		return err
 	}
 	if err := writeCapturedTask(cfg, task); err != nil {
 		return err
 	}
-	resolved = taskResolved
 
 	var repoRoot string
 	var added []lineRef
-	if categoryAllowed(resolved.Categories, core.CategoryCodeDiffs) {
-		var ok bool
-		repoRoot, ok = gitRepoRootContext(ctx, cwd)
-		if ok {
-			added, err = gitAddedLinesContext(ctx, repoRoot)
-			if err != nil {
-				return fmt.Errorf("compute added lines: %w", err)
-			}
+	var ok bool
+	repoRoot, ok = gitRepoRootContext(ctx, cwd)
+	if ok {
+		added, err = gitAddedLinesContext(ctx, repoRoot)
+		if err != nil {
+			return fmt.Errorf("compute added lines: %w", err)
 		}
 	}
 

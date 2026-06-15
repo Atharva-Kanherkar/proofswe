@@ -2,6 +2,8 @@ package core
 
 import (
 	"encoding/json"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +72,67 @@ func TestDefaultTierStoresNoCleartext(t *testing.T) {
 	}
 	if got.Prompts[0].TextHash == "" || got.Code.Files[0].PathHash == "" || got.Session.IDHash == "" {
 		t.Fatalf("default projection dropped hashes: %+v", got)
+	}
+}
+
+func TestProjectionRequiresExplicitStringCoverage(t *testing.T) {
+	explicit := map[string]string{
+		"Task.TaskID":                                  "metadata",
+		"Task.Harness":                                 "metadata",
+		"Task.HarnessCLIVersion":                       "metadata",
+		"Task.AdapterVersion":                          "metadata",
+		"Task.ConsentTier":                             "metadata",
+		"Task.Session.IDHash":                          "hash",
+		"Task.Session.ID":                              "full-transcript",
+		"Task.Model.ID":                                "metadata",
+		"Task.Repo.RemoteHash":                         "hash",
+		"Task.Repo.RemoteURL":                          "repo-linkage",
+		"Task.Repo.BaseCommit":                         "repo-linkage",
+		"Task.Repo.BaseCommitCommittedAt":              "repo-linkage",
+		"Task.Repo.Branch":                             "repo-linkage",
+		"Task.Repo.LicenseSPDX":                        "repo-linkage",
+		"Task.Repo.LockfileHashes{key}":                "metadata",
+		"Task.Repo.LockfileHashes{value}":              "hash",
+		"Task.Environment.OS":                          "metadata",
+		"Task.Environment.Toolchain{key}":              "metadata",
+		"Task.Environment.Toolchain{value}":            "metadata",
+		"Task.Environment.Tools[]":                     "metadata",
+		"Task.Environment.ApprovalPolicy":              "metadata",
+		"Task.Environment.SandboxPolicy":               "metadata",
+		"Task.Prompts[].Role":                          "metadata",
+		"Task.Prompts[].TextHash":                      "hash",
+		"Task.Prompts[].Text":                          "prompts",
+		"Task.Trajectory.AssistantMessages[].Name":     "metadata",
+		"Task.Trajectory.AssistantMessages[].TextHash": "hash",
+		"Task.Trajectory.AssistantMessages[].Text":     "assistant-msgs",
+		"Task.Trajectory.ToolCalls[].Name":             "metadata",
+		"Task.Trajectory.ToolCalls[].TextHash":         "hash",
+		"Task.Trajectory.ToolCalls[].Text":             "tool-calls",
+		"Task.Trajectory.ToolOutputs[].Name":           "metadata",
+		"Task.Trajectory.ToolOutputs[].TextHash":       "hash",
+		"Task.Trajectory.ToolOutputs[].Text":           "tool-outputs",
+		"Task.Code.Patch":                              "code+diffs",
+		"Task.Code.TestPatch":                          "code+diffs",
+		"Task.Code.Files[].PathHash":                   "hash",
+		"Task.Code.Files[].Path":                       "code+diffs",
+		"Task.Code.Files[].Role":                       "metadata",
+		"Task.RedactionReport.ScrubberVersion":         "metadata",
+		"Task.RedactionReport.ByCategory{key}":         "metadata",
+		"Task.RedactionReport.BestEffortNotice":        "metadata",
+	}
+	got := stringFieldPaths(reflect.TypeOf(Task{}), "Task")
+	want := make([]string, 0, len(explicit))
+	for path := range explicit {
+		want = append(want, path)
+	}
+	sort.Strings(want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("string field projection coverage mismatch (-want +got):\n%s", diff)
+	}
+	for path, classification := range explicit {
+		if classification == "" {
+			t.Fatalf("field %s has empty projection classification", path)
+		}
 	}
 }
 
@@ -241,6 +304,49 @@ func FuzzParseTaskTolerant(f *testing.F) {
 		var task Task
 		_ = json.Unmarshal(data, &task)
 	})
+}
+
+func stringFieldPaths(t reflect.Type, path string) []string {
+	var out []string
+	collectStringFieldPaths(t, path, &out)
+	sort.Strings(out)
+	return out
+}
+
+func collectStringFieldPaths(t reflect.Type, path string, out *[]string) {
+	if t == reflect.TypeOf(time.Time{}) || t == reflect.TypeOf(json.RawMessage{}) {
+		return
+	}
+	switch t.Kind() { //nolint:exhaustive // Non-string/container kinds are intentionally ignored.
+	case reflect.String:
+		*out = append(*out, path)
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if field.PkgPath != "" || field.Tag.Get("json") == "-" {
+				continue
+			}
+			collectStringFieldPaths(field.Type, path+"."+field.Name, out)
+		}
+	case reflect.Slice, reflect.Array:
+		if t.Elem().Kind() == reflect.Uint8 {
+			return
+		}
+		collectStringFieldPaths(t.Elem(), path+"[]", out)
+	case reflect.Map:
+		if t.Key().Kind() == reflect.String {
+			*out = append(*out, path+"{key}")
+		}
+		if t.Elem().Kind() == reflect.String {
+			*out = append(*out, path+"{value}")
+		} else {
+			collectStringFieldPaths(t.Elem(), path+"{value}", out)
+		}
+	case reflect.Pointer:
+		collectStringFieldPaths(t.Elem(), path, out)
+	default:
+		return
+	}
 }
 
 func sampleTask() Task {
