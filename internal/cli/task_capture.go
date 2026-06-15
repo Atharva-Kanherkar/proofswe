@@ -46,7 +46,6 @@ func captureTaskRecord(ctx context.Context, cfg Config, harness string, in hookI
 
 	repo := core.TaskRepo{LockfileHashes: lockfileHashes(cwd, h)}
 	var repoRoot string
-	var diff []byte
 	var added []lineRef
 	if categoryAllowed(resolved.Categories, core.CategoryRepoLinkage) || categoryAllowed(resolved.Categories, core.CategoryCodeDiffs) {
 		info := collectRepoInfo(ctx, cwd, h)
@@ -61,11 +60,8 @@ func captureTaskRecord(ctx context.Context, cfg Config, harness string, in hookI
 			}
 		}
 		if categoryAllowed(resolved.Categories, core.CategoryCodeDiffs) && repoRoot != "" {
-			var err error
-			added, err = gitAddedLinesContext(ctx, repoRoot)
-			if err == nil {
-				diff, _ = runGitContext(ctx, repoRoot, "-c", "core.quotePath=false", "diff", "--no-color", "HEAD")
-			}
+			// Best-effort: nil on error leaves the code record empty.
+			added, _ = gitAddedLinesContext(ctx, repoRoot)
 		}
 	}
 
@@ -103,7 +99,7 @@ func captureTaskRecord(ctx context.Context, cfg Config, harness string, in hookI
 	report := redact.Report{ScrubberVersion: redact.ScrubberVersion, BestEffortNotice: redact.BestEffortNotice}
 	task.Prompts, report = buildPromptRecords(transcript.prompts, h, resolved.Categories, report)
 	task.Trajectory, report = buildTrajectoryRecords(transcript, h, resolved.Categories, report)
-	task.Code, report = buildCodeRecord(diff, added, h, resolved.Categories, repoAllowsRawCode(repo), report)
+	task.Code, report = buildCodeRecord(added, h, resolved.Categories, repoAllowsRawCode(repo), report)
 	task.RedactionReport = core.RedactionReport{
 		ScrubberVersion:  redact.ScrubberVersion,
 		SpansRedacted:    report.SpansRedacted,
@@ -182,27 +178,47 @@ func buildTrajectoryRecords(transcript taskTranscript, h hashing.Hasher, categor
 	return trajectory, report
 }
 
-func buildCodeRecord(diff []byte, added []lineRef, h hashing.Hasher, categories []core.ConsentCategory, codeAllowed bool, report redact.Report) (core.TaskCode, redact.Report) {
-	files := make([]core.TaskFile, 0, len(added))
-	seen := map[string]bool{}
+func buildCodeRecord(added []lineRef, h hashing.Hasher, categories []core.ConsentCategory, codeAllowed bool, report redact.Report) (core.TaskCode, redact.Report) {
+	// Group added lines by file in first-seen order. `added` is the SAME set
+	// keeprate uses (working-tree diff vs HEAD *plus* untracked new files), so the
+	// reconstructed content captures new-file bodies that `git diff HEAD` omits.
+	order := make([]string, 0)
+	byPath := map[string][]string{}
+	files := make([]core.TaskFile, 0)
 	for _, ref := range added {
-		if ref.path == "" || seen[ref.path] {
+		if ref.path == "" {
 			continue
 		}
-		seen[ref.path] = true
-		files = append(files, core.TaskFile{PathHash: h.StringHash(ref.path), Path: ref.path, Role: core.ClassifyFileRole(ref.path)})
+		if _, ok := byPath[ref.path]; !ok {
+			order = append(order, ref.path)
+			files = append(files, core.TaskFile{PathHash: h.StringHash(ref.path), Path: ref.path, Role: core.ClassifyFileRole(ref.path)})
+		}
+		byPath[ref.path] = append(byPath[ref.path], ref.text)
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].PathHash < files[j].PathHash })
 
 	code := core.TaskCode{Files: files}
-	if len(diff) == 0 || !codeAllowed || (!categoryAllowed(categories, core.CategoryCodeDiffs) && !categoryAllowed(categories, core.CategoryFullTranscript)) {
+	if len(order) == 0 || !codeAllowed || (!categoryAllowed(categories, core.CategoryCodeDiffs) && !categoryAllowed(categories, core.CategoryFullTranscript)) {
 		return code, report
 	}
-	patch, testPatch := splitPatchByRole(string(diff))
+
+	var solution, test strings.Builder
+	for _, p := range order {
+		b := &solution
+		if core.ClassifyFileRole(p) == core.FileRoleTest {
+			b = &test
+		}
+		fmt.Fprintf(b, "+++ b/%s\n", p)
+		for _, line := range byPath[p] {
+			b.WriteString("+")
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
 	var scrubReport redact.Report
-	code.Patch, scrubReport = scrubText(patch)
+	code.Patch, scrubReport = scrubText(solution.String())
 	report = redact.MergeReports(report, scrubReport)
-	code.TestPatch, scrubReport = scrubText(testPatch)
+	code.TestPatch, scrubReport = scrubText(test.String())
 	report = redact.MergeReports(report, scrubReport)
 	return code, report
 }
@@ -254,6 +270,12 @@ func extractClaudeTaskLine(raw map[string]any, out *taskTranscript) {
 	msg, _ := raw["message"].(map[string]any)
 	switch typ {
 	case "user":
+		// Claude tool results are user records whose content is a tool_result
+		// block array — capture those as tool outputs, not prompts.
+		if outputs := toolResults(msg["content"]); len(outputs) > 0 {
+			out.toolOutputs = append(out.toolOutputs, outputs...)
+			return
+		}
 		if text := contentText(msg["content"]); text != "" {
 			out.prompts = append(out.prompts, text)
 		}
@@ -333,6 +355,19 @@ func toolUses(value any) []namedText {
 		}
 		name, _ := m["name"].(string)
 		out = append(out, namedText{name: name, text: stringifyJSON(m["input"])})
+	}
+	return out
+}
+
+func toolResults(value any) []namedText {
+	items, _ := value.([]any)
+	var out []namedText
+	for _, item := range items {
+		m, _ := item.(map[string]any)
+		if typ, _ := m["type"].(string); typ != "tool_result" {
+			continue
+		}
+		out = append(out, namedText{text: contentText(m["content"])})
 	}
 	return out
 }
@@ -451,39 +486,6 @@ func isPublicRemote(remote string) bool {
 		return false
 	}
 	return strings.Contains(lower, "github.com/") || strings.Contains(lower, "gitlab.com/") || strings.Contains(lower, "codeberg.org/")
-}
-
-func splitPatchByRole(diff string) (solutionPatch, testPatch string) {
-	if diff == "" {
-		return "", ""
-	}
-	parts := strings.Split(diff, "\ndiff --git ")
-	for i, part := range parts {
-		if i > 0 {
-			part = "diff --git " + part
-		}
-		target := &solutionPatch
-		header := firstLine(part)
-		fields := strings.Fields(header)
-		if len(fields) >= 4 {
-			path := strings.TrimPrefix(fields[3], "b/")
-			if core.ClassifyFileRole(path) == core.FileRoleTest {
-				target = &testPatch
-			}
-		}
-		if *target != "" && !strings.HasSuffix(*target, "\n") {
-			*target += "\n"
-		}
-		*target += part
-	}
-	return solutionPatch, testPatch
-}
-
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }
 
 func categoryAllowed(categories []core.ConsentCategory, category core.ConsentCategory) bool {
