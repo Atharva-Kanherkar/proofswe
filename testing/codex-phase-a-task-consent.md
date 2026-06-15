@@ -9,7 +9,7 @@
 - Add `proofswe show` and `proofswe inspect <session>` that print the exact projected record the current tier would write. Show/inspect must byte-match capture output for the same tier and must never leak stale higher-tier cleartext.
 - Wire task capture into hook lifecycle: `SessionStart` preserves the loud notice before capture and names both `proofswe off` and `proofswe consent`; `SessionEnd`/`Stop` writes the task record beside the existing pending record.
 - Preserve kill-switch first semantics: `PROOFSWE_OFF=1`, `DO_NOT_TRACK=1`, `enabled=false`, and `.proofswe-ignore` each independently short-circuit to zero capture before any task directory or record is written.
-- Gate repo linkage and git calls behind repo-linkage consent. The default hashes-only path must run zero git subprocesses. Git subprocesses must honor context cancellation and degrade cleanly when git is absent.
+- Gate raw repo linkage and raw code content behind repo-linkage/code consent. The default hashes-only path still captures salted pending line hashes for keeprate when git is available; git subprocesses must honor context cancellation and degrade cleanly when git is absent.
 - Code-bearing tiers may write raw code only when provenance is complete and the repo is public with a permissive SPDX license (`MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `Apache-2.0`, `ISC`, `Unlicense`, `0BSD`). Private, paid/enterprise, copyleft, no-license, unknown-license, or incomplete-provenance cases must fall back to hashes-only even with explicit opt-in.
 - Downgrading global or per-repo consent must deterministically purge now-disallowed cleartext everywhere under `~/.proofswe`, while salted hashes survive, config reflects the lower tier, and decline/downgrade never triggers future auto-reprompt.
 - Preserve local-only capture. No network may be introduced in the capture or redaction path.
@@ -19,6 +19,7 @@
 ## Unit Tests
 - `TestProjectDropsHigherTierFields` - table per tier verifies exactly which `Task` fields remain populated and which cleartext fields are blanked.
 - `TestDefaultTierStoresNoCleartext` - default projection blanks prompt text, code patch/test patch, repo remote/base commit, and session id while preserving hashes.
+- `TestProjectionRequiresExplicitStringCoverage` - every string-bearing field in the `Task` tree is explicitly classified as public metadata, hash-only metadata, or tier-gated cleartext so future fields cannot leak by omission.
 - `TestFileRoleClassification` - classifies test, solution, config, and lockfile paths across common languages.
 - `TestFileRoleClassificationPathTraversalAndOddNames` - hostile and odd paths never escape the repo and are not misclassified as benign roles.
 - `TestTaskIDIsDeterministicAndAddressable` - task IDs are stable for the same salt/remote/session and change when any input changes.
@@ -35,8 +36,9 @@
 - `TestModelFromTranscriptNotStdin` - transcript model beats absent stdin model.
 - `TestModelFromTranscriptFallbackChain` - transcript last-non-empty model wins, stdin is fallback, empty model is allowed without crash.
 - `TestRedactCategories` - every planted secret category named in issue #24 is redacted with zero leak.
+- `TestRedactBareShapeSecrets` - bare hex, base32/alnum, and prose-position tokens redact without relying on `password=`/`secret=` keyword context.
 - `TestRedactNoCategoryRegressesToZero` - detector registry covers every taxonomy/category entry.
-- `TestRedactOverRedactionBounds` - UUIDs, git SHAs, benign image/base64/hash decoys are not over-redacted when allowlisted.
+- `TestRedactOverRedactionBounds` - benign image/base64 decoys are not over-redacted when allowlisted; bare SHA-like values may be over-redacted to prefer recall over leaking hex secrets.
 - `TestRedactPerRuleSelfValidation` - each detector matches its true positives and rejects its false positives.
 - `TestRedactReportCountsAreExact` - redaction report counts exactly match planted spans and categories.
 - `TestRedactReportNeverEchoesSecret` - reports and errors never contain matched secret text.
@@ -63,7 +65,8 @@
 - `TestScrubIsIdempotent` - property: scrubbing twice equals scrubbing once and generated secrets do not survive.
 - `TestConsentMachineInvariant` - property: repeated consent actions keep on-disk cleartext within current-tier allowance.
 - `TestRepoLinkageCaptureMatchesGit` - temp repo linkage matches git only with repo-linkage consent and degrades in non-git cwd.
-- `TestDefaultTierRunsZeroGitSubprocess` - default full hook flow uses a git counting spy and performs zero git calls.
+- `TestDefaultTierCapturesSaltedPendingLineHashes` - with no consent config, a git repo diff produces pending salted path/line hashes while the task record still contains no raw code.
+- `TestDefaultTierGitBinaryAbsentDegradesNotErrors` - missing git at the default tier exits 0 and writes an empty/degraded pending record rather than failing the hook.
 - `TestDetachedHEADCapture` - detached HEAD records commit and stable branch semantics.
 - `TestEmptyRepoNoCommitsCapture` - empty git repos degrade without bogus SHA or crash.
 - `TestNoRemoteOrMultipleRemotesCapture` - missing/multiple remotes degrade and fail code gate closed.
