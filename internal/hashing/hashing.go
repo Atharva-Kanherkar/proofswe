@@ -17,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
@@ -33,6 +35,8 @@ const (
 type Hasher struct {
 	salt []byte
 }
+
+var saltLocks sync.Map
 
 func New(salt []byte) Hasher {
 	return Hasher{salt: salt}
@@ -59,12 +63,19 @@ func LoadSalt(stateDir string) ([]byte, error) {
 	if stateDir == "" {
 		return nil, fmt.Errorf("hashing: proofswe state dir unavailable")
 	}
+	lock := saltLock(stateDir)
+	lock.Lock()
+	defer lock.Unlock()
+
 	path := filepath.Join(stateDir, SaltFileName)
 
 	data, err := os.ReadFile(path)
 	switch {
 	case err == nil:
-		if salt, decodeErr := hex.DecodeString(strings.TrimSpace(string(data))); decodeErr == nil && len(salt) >= MinSaltBytes {
+		if salt, ok := decodeSalt(data); ok {
+			return salt, nil
+		}
+		if salt, raceErr := readRacedSalt(path); raceErr == nil {
 			return salt, nil
 		}
 		// Corrupt or too-short salt: regenerate below.
@@ -80,27 +91,50 @@ func LoadSalt(stateDir string) ([]byte, error) {
 		return nil, fmt.Errorf("hashing: generate salt: %w", err)
 	}
 	if err := writeSaltFile(stateDir, path, salt); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			data, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return nil, fmt.Errorf("hashing: read raced salt: %w", readErr)
-			}
-			persisted, decodeErr := hex.DecodeString(strings.TrimSpace(string(data)))
-			if decodeErr == nil && len(persisted) >= MinSaltBytes {
-				return persisted, nil
-			}
+		if os.IsExist(err) || errors.Is(err, os.ErrExist) {
+			return readRacedSalt(path)
 		}
 		return nil, err
 	}
-	data, err = os.ReadFile(path)
+	return readPersistedSalt(path)
+}
+
+func saltLock(stateDir string) *sync.Mutex {
+	clean := filepath.Clean(stateDir)
+	if abs, err := filepath.Abs(clean); err == nil {
+		clean = abs
+	}
+	lock, _ := saltLocks.LoadOrStore(clean, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func decodeSalt(data []byte) ([]byte, bool) {
+	salt, err := hex.DecodeString(strings.TrimSpace(string(data)))
+	return salt, err == nil && len(salt) >= MinSaltBytes
+}
+
+func readPersistedSalt(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("hashing: read persisted salt: %w", err)
 	}
-	persisted, err := hex.DecodeString(strings.TrimSpace(string(data)))
-	if err != nil || len(persisted) < MinSaltBytes {
-		return nil, fmt.Errorf("hashing: persisted invalid salt")
+	if salt, ok := decodeSalt(data); ok {
+		return salt, nil
 	}
-	return persisted, nil
+	return nil, fmt.Errorf("hashing: persisted invalid salt")
+}
+
+func readRacedSalt(path string) ([]byte, error) {
+	var lastErr error
+	for i := 0; i < 6; i++ {
+		salt, err := readPersistedSalt(path)
+		if err == nil {
+			return salt, nil
+		}
+		lastErr = err
+		time.Sleep(time.Duration(1<<i) * time.Millisecond)
+	}
+	return nil, fmt.Errorf("hashing: read raced salt: %w", lastErr)
 }
 
 func writeSaltFile(dir, path string, salt []byte) error {
@@ -110,7 +144,7 @@ func writeSaltFile(dir, path string, salt []byte) error {
 
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		if errors.Is(err, os.ErrExist) {
+		if os.IsExist(err) || errors.Is(err, os.ErrExist) {
 			return err
 		}
 		return fmt.Errorf("hashing: create salt: %w", err)

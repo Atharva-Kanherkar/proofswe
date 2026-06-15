@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,6 +28,7 @@ var (
 	}
 	claudeHookEvents = []string{"SessionStart", "SessionEnd", "Stop"}
 	codexHookEvents  = []string{"SessionStart", "Stop"}
+	atomicWriteLocks sync.Map
 )
 
 func enableHooks(cfg Config) error {
@@ -808,6 +810,10 @@ func shellQuoteForOS(s, goos string) string {
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	lock := atomicWriteLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -837,7 +843,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := replaceFile(tmpPath, path); err != nil {
 		return err
 	}
 	cleanup = false
@@ -849,6 +855,36 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	_ = dirFile.Sync()
 	_ = dirFile.Close()
 	return nil
+}
+
+func atomicWriteLock(path string) *sync.Mutex {
+	clean := filepath.Clean(path)
+	if abs, err := filepath.Abs(clean); err == nil {
+		clean = abs
+	}
+	lock, _ := atomicWriteLocks.LoadOrStore(clean, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func replaceFile(tmpPath, path string) error {
+	if err := os.Rename(tmpPath, path); err == nil {
+		return nil
+	} else if runtime.GOOS != "windows" {
+		return err
+	}
+
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			lastErr = err
+		} else if err := os.Rename(tmpPath, path); err != nil {
+			lastErr = err
+		} else {
+			return nil
+		}
+		time.Sleep(time.Duration(i+1) * 10 * time.Millisecond)
+	}
+	return lastErr
 }
 
 func wiredLabel(wired bool) string {
