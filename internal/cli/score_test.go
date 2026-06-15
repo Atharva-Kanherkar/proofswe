@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Atharva-Kanherkar/proofswe/internal/judge"
 )
 
 func runScore(t *testing.T, args ...string) (string, error) {
@@ -97,6 +99,51 @@ func TestScoreCommand_HTML(t *testing.T) {
 	}
 	if !strings.Contains(out, "wrote "+htmlPath) {
 		t.Errorf("expected wrote-notice for %s, got %q", htmlPath, out)
+	}
+}
+
+func TestScoreCommand_Judge(t *testing.T) {
+	// Swap in an offline fake judge so the success axis can be exercised without network.
+	prev := newScoreJudge
+	newScoreJudge = func(Config) (judge.Judge, error) {
+		return judge.FakeJudge{V: judge.Verdict{Outcome: judge.OutcomeAccepted, Corrections: 1, Sentiment: 0.8}}, nil
+	}
+	t.Cleanup(func() { newScoreJudge = prev })
+
+	fixture := filepath.Join("testdata", "score", "session.jsonl")
+	out, err := runScore(t, "--judge", "--json", fixture)
+	if err != nil {
+		t.Fatalf("score --judge: %v", err)
+	}
+
+	var got struct {
+		Axes []struct {
+			Name    string  `json:"name"`
+			Present bool    `json:"present"`
+			Score   float64 `json:"score"`
+		} `json:"axes"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out)
+	}
+	var success *struct {
+		Present bool
+		Score   float64
+	}
+	for _, a := range got.Axes {
+		if a.Name == "success" {
+			success = &struct {
+				Present bool
+				Score   float64
+			}{a.Present, a.Score}
+		}
+	}
+	if success == nil || !success.Present {
+		t.Fatalf("success axis should be present once judged; got %+v", got.Axes)
+	}
+	// accepted(100) - 8*1 corrections + 10*0.8 sentiment = 100 (clamped).
+	if success.Score < 99 {
+		t.Errorf("success score = %.1f, want ~100", success.Score)
 	}
 }
 

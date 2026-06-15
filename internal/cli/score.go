@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,8 +13,24 @@ import (
 	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/core"
+	"github.com/Atharva-Kanherkar/proofswe/internal/judge"
+	"github.com/Atharva-Kanherkar/proofswe/internal/reader"
 	"github.com/Atharva-Kanherkar/proofswe/internal/score"
 )
+
+// newScoreJudge builds the judge used by `score --judge`. It is a package var so
+// tests can swap in a judge.FakeJudge and run offline.
+var newScoreJudge = func(cfg Config) (judge.Judge, error) {
+	getenv := cfg.Getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	key := getenv("ANTHROPIC_API_KEY")
+	if key == "" {
+		return nil, fmt.Errorf("set ANTHROPIC_API_KEY to use --judge")
+	}
+	return judge.HTTPJudge{APIKey: key, Model: getenv("ANTHROPIC_MODEL"), BaseURL: getenv("ANTHROPIC_BASE_URL")}, nil
+}
 
 // runScoreCommand scores a single captured transcript and prints a scorecard.
 //
@@ -22,10 +39,11 @@ func runScoreCommand(cfg Config, args []string) error {
 	flags := flag.NewFlagSet("score", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var harness, htmlPath string
-	var asJSON bool
+	var asJSON, useJudge bool
 	flags.StringVar(&harness, "harness", "", "claudecode|codex (auto-detected if empty)")
 	flags.BoolVar(&asJSON, "json", false, "emit the scorecard as JSON")
 	flags.StringVar(&htmlPath, "html", "", "also write an HTML scorecard to this path")
+	flags.BoolVar(&useJudge, "judge", false, "score the quality/success axis with the behavioral judge (needs ANTHROPIC_API_KEY)")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
@@ -52,6 +70,22 @@ func runScoreCommand(cfg Config, args []string) error {
 	if sig.ToolCalls == 0 && sig.Turns == 0 && sig.InputTokens == 0 {
 		return fmt.Errorf("no scorable activity in %s (wrong harness, or empty transcript?)", path)
 	}
+
+	if useJudge {
+		j, err := newScoreJudge(cfg)
+		if err != nil {
+			return err
+		}
+		// The judge reads only the conversational turns, model identity stripped.
+		if v, err := j.Assess(context.Background(), transcriptTurns(harness, path)); err != nil {
+			_, _ = fmt.Fprintf(cfg.Stderr, "judge: %v (success axis left pending)\n", err)
+		} else {
+			s := judge.ScoreSuccess(v)
+			sig.Success = &s
+			sig.SuccessLabel = judge.Label(v)
+		}
+	}
+
 	result := score.Score(sig)
 
 	if htmlPath != "" {
@@ -112,6 +146,61 @@ func signalsFromEvents(events []core.NormalizedEvent) score.Signals {
 	s.CostUSD = cost
 	s.CostEstimated = est
 	return s
+}
+
+// transcriptTurns reads the raw transcript in order and returns the conversational
+// turns (developer prompts + assistant text) for the judge. Tool-result records and
+// tool-call blocks are skipped; the developer's reactions are what we judge.
+func transcriptTurns(harness, path string) []judge.Turn {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+	var turns []judge.Turn
+	_, _ = reader.ReadNewLines(f, 0, reader.Options{}, func(line []byte, _ int64) error {
+		if t, ok := turnFromLine(harness, line); ok {
+			turns = append(turns, t)
+		}
+		return nil
+	})
+	return turns
+}
+
+func turnFromLine(harness string, line []byte) (judge.Turn, bool) {
+	var raw map[string]any
+	if json.Unmarshal(line, &raw) != nil {
+		return judge.Turn{}, false
+	}
+	switch harness {
+	case "claudecode":
+		typ, _ := raw["type"].(string)
+		msg, _ := raw["message"].(map[string]any)
+		switch typ {
+		case "user":
+			if len(toolResults(msg["content"])) > 0 {
+				return judge.Turn{}, false // a tool result, not a developer prompt
+			}
+			if text := contentText(msg["content"]); text != "" {
+				return judge.Turn{Role: "user", Text: text}, true
+			}
+		case "assistant":
+			if text := contentText(msg["content"]); text != "" {
+				return judge.Turn{Role: "assistant", Text: text}, true
+			}
+		}
+	case "codex":
+		if typ, _ := raw["type"].(string); typ == "response_item" {
+			payload, _ := raw["payload"].(map[string]any)
+			if itemType, _ := payload["type"].(string); itemType == "message" {
+				role, _ := payload["role"].(string)
+				if text := contentText(payload["content"]); text != "" && (role == "user" || role == "assistant") {
+					return judge.Turn{Role: role, Text: text}, true
+				}
+			}
+		}
+	}
+	return judge.Turn{}, false
 }
 
 // toolResultIsError flags a failed tool call from either the codex exit code or
