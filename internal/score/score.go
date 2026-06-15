@@ -36,6 +36,13 @@ type Signals struct {
 	CostUSD       float64 `json:"cost_usd"`
 	CostEstimated bool    `json:"cost_estimated"`
 	DurationMS    int64   `json:"duration_ms,omitempty"`
+
+	// Success is the 0–100 quality score from the behavioral judge (#30). It is
+	// nil until a session is judged; while nil the success axis stays pending and
+	// is excluded from the composite. score stays judge-agnostic by taking the
+	// already-computed number rather than importing the judge.
+	Success      *float64 `json:"success,omitempty"`
+	SuccessLabel string   `json:"success_label,omitempty"`
 }
 
 // Baselines are the soft reference points a single session is scored against.
@@ -82,7 +89,7 @@ func ScoreWith(s Signals, b Baselines) Result {
 		efficiencyAxis(s, b),
 		autonomyAxis(s),
 		frictionAxis(s, b),
-		{Name: "success", Present: false, Detail: pendingDetail},
+		successAxis(s),
 	}
 
 	var sum float64
@@ -122,6 +129,17 @@ func autonomyAxis(s Signals) Axis {
 func frictionAxis(s Signals, b Baselines) Axis {
 	val := round1(100 * ratio(b.Turns, float64(s.Turns)))
 	return Axis{Name: "friction", Present: true, Score: val, Detail: fmt.Sprintf("%d user turns", s.Turns)}
+}
+
+func successAxis(s Signals) Axis {
+	if s.Success == nil {
+		return Axis{Name: "success", Present: false, Detail: pendingDetail}
+	}
+	detail := s.SuccessLabel
+	if detail == "" {
+		detail = "judged"
+	}
+	return Axis{Name: "success", Present: true, Score: clamp(round1(*s.Success), 0, 100), Detail: detail}
 }
 
 // ratio maps a non-negative quantity to (0,1]: 0 -> 1, ref -> 0.5, large -> ~0.

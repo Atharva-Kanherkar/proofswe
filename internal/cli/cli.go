@@ -88,7 +88,7 @@ Usage:
   proofswe consent set --tier=<hashes-only|prompts|actions|code|full>
   proofswe show <session>
   proofswe inspect <session>
-  proofswe score <transcript> [--harness=claudecode|codex] [--json] [--html out.html]
+  proofswe score <transcript> [--harness=claudecode|codex] [--judge] [--json] [--html out.html]
   proofswe resolve [--maturity=24h]
   proofswe hook <claudecode|codex> <SessionStart|SessionEnd|Stop>
   proofswe version
