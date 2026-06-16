@@ -3,15 +3,17 @@
 // The caller (internal/cli) extracts the signals and hands them in.
 //
 // What it scores TODAY is execution, computed from the transcript alone:
+//   - success    (deterministic transcript signals; optional judge nudge)
 //   - efficiency (cost + tool calls vs a soft baseline)
 //   - autonomy   (tool-error rate)
 //   - friction   (user turns vs a soft baseline)
 //
-// The success/quality axis needs the behavioral judge (issue #30) and outcome
-// resolution; until those land it is reported as "pending" and EXCLUDED from the
-// composite rather than scored as zero. Weights are equal and unlearned — learned
-// weights (issue #32) replace this once a labeled subset exists. Treat the number
-// as an execution profile, not a quality verdict.
+// The success axis is objective-first: tests/build/lint, commit/PR activity, and
+// clean termination set the base score; the behavioral judge (issue #30) is an
+// optional supplement. Axes with no signal are reported as "pending" and excluded
+// rather than scored as zero. Weights are equal and unlearned — learned weights
+// (issue #32) replace this once a labeled subset exists. Treat the number as an
+// execution profile, not a final quality verdict.
 package score
 
 import (
@@ -21,8 +23,8 @@ import (
 )
 
 // Signals is the per-session input to scoring. The caller fills what it can
-// measure from the transcript; outcome signals (merge, satisfaction) arrive later
-// via separate fields and are not part of the v0 execution score.
+// measure from the transcript; later outcome signals can be added without making
+// this package depend on transcript parsing.
 type Signals struct {
 	Model         string  `json:"model,omitempty"`
 	ToolCalls     int     `json:"tool_calls"`
@@ -37,12 +39,19 @@ type Signals struct {
 	CostEstimated bool    `json:"cost_estimated"`
 	DurationMS    int64   `json:"duration_ms,omitempty"`
 
-	// Success is the 0–100 quality score from the behavioral judge (#30). It is
-	// nil until a session is judged; while nil the success axis stays pending and
-	// is excluded from the composite. score stays judge-agnostic by taking the
-	// already-computed number rather than importing the judge.
-	Success      *float64 `json:"success,omitempty"`
-	SuccessLabel string   `json:"success_label,omitempty"`
+	// Deterministic success signals, read straight from the transcript (no LLM):
+	// Verification is "passed"/"failed"/"" (none run); Landed is whether the
+	// session committed/pushed/opened a PR; Terminated is the clean-vs-abandoned
+	// end (nil = unknown). These make the success axis objective-first.
+	Verification string `json:"verification,omitempty"`
+	Landed       bool   `json:"landed,omitempty"`
+	Terminated   *bool  `json:"terminated,omitempty"`
+
+	// Success/SuccessLabel are the behavioral judge's (#30) optional supplement —
+	// the human-experience read the deterministic signals can't see. nil when the
+	// judge didn't run. score stays judge-agnostic by taking the number.
+	Success      *float64 `json:"judge_success,omitempty"`
+	SuccessLabel string   `json:"judge_label,omitempty"`
 }
 
 // Baselines are the soft reference points a single session is scored against.
@@ -75,8 +84,8 @@ type Result struct {
 }
 
 const (
-	pendingDetail = "pending — needs the behavioral judge (#30) and outcome resolution"
-	resultNote    = "provisional execution score over present axes; success/quality pending; equal unlearned weights"
+	pendingDetail = "pending — no deterministic success signal or behavioral judge"
+	resultNote    = "provisional score over present axes; equal unlearned weights"
 )
 
 // Score scores Signals against the default baselines.
@@ -132,14 +141,56 @@ func frictionAxis(s Signals, b Baselines) Axis {
 }
 
 func successAxis(s Signals) Axis {
-	if s.Success == nil {
+	known := s.Verification != "" || s.Landed || s.Terminated != nil
+	if !known && s.Success == nil {
 		return Axis{Name: "success", Present: false, Detail: pendingDetail}
 	}
-	detail := s.SuccessLabel
-	if detail == "" {
-		detail = "judged"
+	if !known { // only the judge spoke
+		detail := s.SuccessLabel
+		if detail == "" {
+			detail = "judged"
+		}
+		return Axis{Name: "success", Present: true, Score: clamp(round1(*s.Success), 0, 100), Detail: detail}
 	}
-	return Axis{Name: "success", Present: true, Score: clamp(round1(*s.Success), 0, 100), Detail: detail}
+	// Objective-first: the deterministic signals set the level; the judge only nudges.
+	base, detail := deterministicSuccess(s)
+	val := base
+	if s.Success != nil {
+		val = 0.65*base + 0.35*(*s.Success) // provisional blend; learned weights later (#32)
+		detail += " + judge"
+	}
+	return Axis{Name: "success", Present: true, Score: clamp(round1(val), 0, 100), Detail: detail}
+}
+
+// deterministicSuccess scores the success axis from transcript-only signals.
+// Constants are provisional and transparent; they become learned weights (#32).
+func deterministicSuccess(s Signals) (float64, string) {
+	score := 55.0 // neutral: work happened and ended, nothing verified either way
+	var parts []string
+	switch s.Verification {
+	case "passed":
+		score = 85
+		parts = append(parts, "tests passed")
+	case "failed":
+		score = 30
+		parts = append(parts, "tests failed")
+	default:
+		parts = append(parts, "no tests run")
+	}
+	if s.Landed {
+		score += 10
+		parts = append(parts, "committed/PR")
+	}
+	switch {
+	case s.Terminated == nil:
+		parts = append(parts, "end unknown")
+	case !*s.Terminated:
+		score -= 25
+		parts = append(parts, "abandoned")
+	default:
+		parts = append(parts, "clean end")
+	}
+	return clamp(score, 0, 100), strings.Join(parts, " · ")
 }
 
 // ratio maps a non-negative quantity to (0,1]: 0 -> 1, ref -> 0.5, large -> ~0.

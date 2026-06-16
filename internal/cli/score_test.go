@@ -66,14 +66,14 @@ func TestScoreCommand_Fixture(t *testing.T) {
 		t.Errorf("composite = %.1f, want in (0,100]", got.Composite)
 	}
 
-	var success struct{ present bool }
+	var successPresent bool
 	for _, a := range got.Axes {
 		if a.Name == "success" {
-			success.present = a.Present
+			successPresent = a.Present
 		}
 	}
-	if success.present {
-		t.Error("success axis must be pending until the judge lands")
+	if !successPresent {
+		t.Error("success axis should be present from deterministic signals (clean termination)")
 	}
 }
 
@@ -141,9 +141,10 @@ func TestScoreCommand_Judge(t *testing.T) {
 	if success == nil || !success.Present {
 		t.Fatalf("success axis should be present once judged; got %+v", got.Axes)
 	}
-	// accepted(100) - 8*1 corrections + 10*0.8 sentiment = 100 (clamped).
-	if success.Score < 99 {
-		t.Errorf("success score = %.1f, want ~100", success.Score)
+	// blended: deterministic (no tests, clean end → 55) with judge (accepted,
+	// 1 correction, +0.8 sentiment → 100): 0.65*55 + 0.35*100 ≈ 70.8.
+	if success.Score < 60 || success.Score > 85 {
+		t.Errorf("blended success = %.1f, want ~71", success.Score)
 	}
 }
 

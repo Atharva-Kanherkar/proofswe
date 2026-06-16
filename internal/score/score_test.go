@@ -49,7 +49,7 @@ func TestScore_SuccessIsPendingAndExcluded(t *testing.T) {
 		t.Fatal("success axis missing")
 	}
 	if succ.Present {
-		t.Error("success axis must be pending (Present=false) until the judge lands")
+		t.Error("success axis must be pending (Present=false) until deterministic signals or judge data exist")
 	}
 	// Composite must be the mean of the 3 present axes only, never dragged to 0 by pending success.
 	var sum float64
@@ -77,4 +77,46 @@ func TestEstimateCostUSD(t *testing.T) {
 	if !est {
 		t.Error("unknown model should be flagged as estimated")
 	}
+}
+
+func boolp(b bool) *bool { return &b }
+
+func TestDeterministicSuccess(t *testing.T) {
+	cases := []struct {
+		name string
+		s    Signals
+		want float64
+	}{
+		{"passed+landed+clean", Signals{Verification: "passed", Landed: true, Terminated: boolp(true)}, 95},
+		{"passed+clean", Signals{Verification: "passed", Terminated: boolp(true)}, 85},
+		{"failed", Signals{Verification: "failed", Terminated: boolp(true)}, 30},
+		{"none+clean", Signals{Terminated: boolp(true)}, 55},
+		{"none+abandoned", Signals{Terminated: boolp(false)}, 30},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, ok := axisByName(Score(tc.s), "success")
+			if !ok || !a.Present {
+				t.Fatal("success should be present from deterministic signals")
+			}
+			approx(t, "success", a.Score, tc.want)
+		})
+	}
+}
+
+func TestDeterministicSuccess_UnknownTerminationIsNotClean(t *testing.T) {
+	a, ok := axisByName(Score(Signals{Verification: "passed"}), "success")
+	if !ok || !a.Present {
+		t.Fatal("success should be present from verification")
+	}
+	if a.Detail != "tests passed · end unknown" {
+		t.Fatalf("detail = %q, want unknown termination detail", a.Detail)
+	}
+}
+
+func TestSuccess_JudgeBlendsOntoDeterministic(t *testing.T) {
+	j := 100.0
+	s := Signals{Verification: "passed", Terminated: boolp(true), Success: &j} // deterministic base 85
+	a, _ := axisByName(Score(s), "success")
+	approx(t, "blended", a.Score, 0.65*85+0.35*100) // 90.25
 }
