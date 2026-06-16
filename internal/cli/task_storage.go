@@ -6,9 +6,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/core"
+)
+
+// Windows transient-open errnos: a concurrent atomic replace can leave the
+// destination briefly locked (ERROR_SHARING_VIOLATION) or delete-pending
+// (ERROR_ACCESS_DENIED). Both clear in microseconds and must not be mistaken
+// for a corrupt record.
+const (
+	winErrAccessDenied     syscall.Errno = 5
+	winErrSharingViolation syscall.Errno = 32
 )
 
 func marshalTaskJSON(task core.Task) ([]byte, error) {
@@ -20,7 +32,7 @@ func marshalTaskJSON(task core.Task) ([]byte, error) {
 }
 
 func readTaskRecordFile(path string) (core.Task, error) {
-	data, err := os.ReadFile(path)
+	data, err := readFileWithRetry(path)
 	if err != nil {
 		return core.Task{}, err
 	}
@@ -29,6 +41,31 @@ func readTaskRecordFile(path string) (core.Task, error) {
 		return core.Task{}, err
 	}
 	return task, nil
+}
+
+// readFileWithRetry reads path, retrying transient Windows sharing violations.
+// A concurrent atomic replace can momentarily lock the destination on Windows;
+// the lock clears in microseconds, so a short bounded retry avoids spurious
+// "file is being used by another process" failures that would otherwise be
+// misread as a corrupt record. It is a plain os.ReadFile elsewhere.
+func readFileWithRetry(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err == nil || runtime.GOOS != "windows" || !isWindowsShareViolation(err) {
+		return data, err
+	}
+	for i := 0; i < 5; i++ {
+		time.Sleep(time.Duration(i+1) * 10 * time.Millisecond)
+		data, err = os.ReadFile(path)
+		if err == nil || !isWindowsShareViolation(err) {
+			return data, err
+		}
+	}
+	return data, err
+}
+
+func isWindowsShareViolation(err error) bool {
+	var errno syscall.Errno
+	return errors.As(err, &errno) && (errno == winErrSharingViolation || errno == winErrAccessDenied)
 }
 
 func writeTaskFileAtomic(path string, data []byte) error {

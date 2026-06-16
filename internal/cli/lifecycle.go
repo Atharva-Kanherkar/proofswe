@@ -867,10 +867,22 @@ func atomicWriteLock(path string) *sync.Mutex {
 }
 
 func replaceFile(tmpPath, path string) error {
-	if err := os.Rename(tmpPath, path); err == nil {
-		return nil
-	} else if runtime.GOOS != "windows" {
+	err := os.Rename(tmpPath, path)
+	if err == nil || runtime.GOOS != "windows" {
 		return err
+	}
+
+	// Windows: a concurrent reader can briefly hold the destination open,
+	// making the atomic replace fail with a sharing violation. The lock clears
+	// in microseconds, so retry the in-place rename first — it replaces
+	// atomically and leaves no window where the file is absent or delete-pending
+	// for other readers. Only if that keeps failing do we fall back to the
+	// destructive remove+rename.
+	for i := 0; i < 5; i++ {
+		time.Sleep(time.Duration(i+1) * 10 * time.Millisecond)
+		if err = os.Rename(tmpPath, path); err == nil {
+			return nil
+		}
 	}
 
 	var lastErr error
