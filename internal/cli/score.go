@@ -79,9 +79,7 @@ func runScoreCommand(cfg Config, args []string) error {
 	extracted := extractTranscriptSignals(harness, path)
 	sig.Verification, sig.Landed, sig.Terminated = successFactsFromExtracted(extracted)
 	sig.Extracted = &extracted
-	if extracted.HumanTurns > 0 {
-		sig.Turns = extracted.HumanTurns // friction uses human turns only — skill injections excluded
-	}
+	sig.Turns = extracted.HumanTurns // friction uses human turns only — skill injections excluded
 
 	if useJudge {
 		j, err := newScoreJudge(cfg)

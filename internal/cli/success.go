@@ -28,7 +28,7 @@ var (
 	// skillRe detects a Claude Code skill injection ("Base directory for this
 	// skill: …/.claude/skills/<name>"). Skill content is human-authored scaffolding,
 	// not the developer's own voice.
-	skillRe = regexp.MustCompile(`(?i)base directory for this skill:\s*\S*/skills/([A-Za-z0-9._-]+)`)
+	skillRe = regexp.MustCompile(`(?i)base directory for this skill:\s*[^\r\n]*[\\/]skills[\\/]([A-Za-z0-9._-]+)\b`)
 )
 
 type toolResultFact struct {
