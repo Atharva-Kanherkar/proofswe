@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -70,6 +72,10 @@ func runScoreCommand(cfg Config, args []string) error {
 	if sig.ToolCalls == 0 && sig.Turns == 0 && sig.InputTokens == 0 {
 		return fmt.Errorf("no scorable activity in %s (wrong harness, or empty transcript?)", path)
 	}
+
+	// Deterministic success signals (objective-first): tests/build/lint passed,
+	// committed/pushed/PR, clean termination — all read from the transcript.
+	sig.Verification, sig.Landed, sig.Terminated = successFactsFromTranscript(harness, path)
 
 	if useJudge {
 		j, err := newScoreJudge(cfg)
@@ -235,19 +241,33 @@ func isEditTool(name string) bool {
 	}
 }
 
-// detectHarness peeks the head of the file: codex rollouts carry a "payload"
-// envelope, claudecode transcripts do not.
+// detectHarness inspects the first records by PARSING them and checking top-level
+// keys — never substring-matching raw text, which false-positives on prose (a
+// developer's message can contain "rollout"/"payload"). Codex rollout records
+// carry a top-level "payload" object; claudecode records carry a top-level "message".
 func detectHarness(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return "claudecode"
 	}
 	defer func() { _ = f.Close() }()
-	buf := make([]byte, 8192)
-	n, _ := io.ReadFull(io.LimitReader(f, int64(len(buf))), buf)
-	head := string(buf[:n])
-	if strings.Contains(head, `"payload"`) || strings.Contains(head, `"turn_context"`) || strings.Contains(head, "rollout") {
-		return "codex"
+	br := bufio.NewReaderSize(f, 1<<20)
+	for i := 0; i < 20; i++ {
+		line, readErr := br.ReadBytes('\n')
+		if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
+			var m map[string]json.RawMessage
+			if json.Unmarshal(trimmed, &m) == nil {
+				if _, ok := m["payload"]; ok {
+					return "codex"
+				}
+				if _, ok := m["message"]; ok {
+					return "claudecode"
+				}
+			}
+		}
+		if readErr != nil {
+			break
+		}
 	}
 	return "claudecode"
 }

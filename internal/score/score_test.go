@@ -78,3 +78,35 @@ func TestEstimateCostUSD(t *testing.T) {
 		t.Error("unknown model should be flagged as estimated")
 	}
 }
+
+func boolp(b bool) *bool { return &b }
+
+func TestDeterministicSuccess(t *testing.T) {
+	cases := []struct {
+		name string
+		s    Signals
+		want float64
+	}{
+		{"passed+landed+clean", Signals{Verification: "passed", Landed: true, Terminated: boolp(true)}, 95},
+		{"passed+clean", Signals{Verification: "passed", Terminated: boolp(true)}, 85},
+		{"failed", Signals{Verification: "failed", Terminated: boolp(true)}, 30},
+		{"none+clean", Signals{Terminated: boolp(true)}, 55},
+		{"none+abandoned", Signals{Terminated: boolp(false)}, 30},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, ok := axisByName(Score(tc.s), "success")
+			if !ok || !a.Present {
+				t.Fatal("success should be present from deterministic signals")
+			}
+			approx(t, "success", a.Score, tc.want)
+		})
+	}
+}
+
+func TestSuccess_JudgeBlendsOntoDeterministic(t *testing.T) {
+	j := 100.0
+	s := Signals{Verification: "passed", Terminated: boolp(true), Success: &j} // deterministic base 85
+	a, _ := axisByName(Score(s), "success")
+	approx(t, "blended", a.Score, 0.65*85+0.35*100) // 90.25
+}
