@@ -11,6 +11,7 @@ type ExtractedSignals struct {
 	LandingQuality    string `json:"landing_quality,omitempty"`
 	Termination       string `json:"termination,omitempty"`
 	HumanTurns        int    `json:"human_turns,omitempty"`
+	Interruptions     int    `json:"interruptions,omitempty"`
 	HumanCorrections  int    `json:"human_corrections,omitempty"`
 	HumanAcceptances  int    `json:"human_acceptances,omitempty"`
 	ReworkCount       int    `json:"rework_count,omitempty"`

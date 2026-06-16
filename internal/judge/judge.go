@@ -57,13 +57,11 @@ func (f FakeJudge) Assess(context.Context, []Turn, []string) (Verdict, error) { 
 const maxTurnChars = 1500
 
 const instruction = `You are reading a coding session between a developer and an AI assistant (identity hidden).
-Judge ONLY how the developer reacted to the assistant's work across the turns — not whether the code looks correct.
-Reply with ONLY this JSON: {"outcome":"accepted|corrected|abandoned","corrections":<int>,"sentiment":<number -1..1>}
-  accepted  = the developer approved or used the result (e.g. "thanks", "lgtm", moved on)
-  corrected = it only worked after the developer pushed back or re-directed
-  abandoned = the developer gave up, or the task was left unresolved
-  corrections = how many times the developer corrected/redirected the assistant
-  sentiment = overall developer tone toward the help, -1 (frustrated) to 1 (delighted)`
+Judge how the developer reacted to the assistant's work across ALL the turns — not whether the code looks correct, and NOT just the final message.
+Reply with ONLY this JSON: {"outcome":"accepted|corrected|abandoned","corrections":<int>,"sentiment":<number between -1 and 1>}
+  outcome     = the session's overall arc: accepted (approved / used it) · corrected (worked only after the developer pushed back) · abandoned (gave up / left unresolved)
+  corrections = COUNT every push-back: a re-direction, a bug report, "no" / "that's wrong" / "not what I asked", or an interruption such as "[Request interrupted by user]". Each one counts.
+  sentiment   = the developer's frustration↔satisfaction over the WHOLE session, -1 (furious) to 1 (delighted). Profanity, insults, ALL-CAPS, sarcasm and exasperation ("wtf", "are you serious", "I already told you") are STRONG frustration — weight them heavily even if the session ends with a polite "thanks". Do NOT anchor on the final turn.`
 
 // BuildPrompt renders the blinded judging prompt. The model id never appears; the
 // assistant is labeled generically.
