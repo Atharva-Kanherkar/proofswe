@@ -83,6 +83,7 @@ All read from the transcript at session end — no longitudinal tracking, no wai
 | references external context | screenshots/URLs the agent literally couldn't see | ✓ | binary |
 | public + license | unlocks the OSS merge-oracle | ✓ | categorical |
 | had failing test at base | was there a reproducible starting point | ✓ (`spec_signals`) | binary |
+| **skills used** | human-authored skills the dev invoked — expert scaffolding that confounds model attribution; the leaderboard must **stratify** skill-assisted vs unaided, never pool. Skill-injected messages are excluded from turns/friction/corrections and from the judge. | 🤖 | categorical |
 
 ## What we build on first (priority order)
 

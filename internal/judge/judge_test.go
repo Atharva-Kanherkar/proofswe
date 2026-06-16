@@ -13,7 +13,7 @@ func TestBuildPrompt_BlindAndIncludesTurns(t *testing.T) {
 	p := BuildPrompt([]Turn{
 		{Role: "user", Text: "fix the redirect"},
 		{Role: "assistant", Text: "done, edited auth.go"},
-	})
+	}, nil)
 	if !strings.Contains(p, "developer: fix the redirect") {
 		t.Errorf("prompt missing developer turn:\n%s", p)
 	}
@@ -104,7 +104,7 @@ func (f fakeDoer) Do(req *http.Request) (*http.Response, error) {
 func TestHTTPJudge_Assess(t *testing.T) {
 	doer := fakeDoer{status: 200, body: `{"content":[{"type":"text","text":"{\"outcome\":\"accepted\",\"corrections\":0,\"sentiment\":0.7}"}]}`}
 	j := HTTPJudge{Client: doer, APIKey: "test-key"}
-	v, err := j.Assess(context.Background(), []Turn{{Role: "user", Text: "hi"}})
+	v, err := j.Assess(context.Background(), []Turn{{Role: "user", Text: "hi"}}, nil)
 	if err != nil {
 		t.Fatalf("assess: %v", err)
 	}
@@ -116,7 +116,14 @@ func TestHTTPJudge_Assess(t *testing.T) {
 func TestHTTPJudge_APIError(t *testing.T) {
 	doer := fakeDoer{status: 500, body: `{"error":{"message":"boom"}}`}
 	j := HTTPJudge{Client: doer, APIKey: "test-key"}
-	if _, err := j.Assess(context.Background(), nil); err == nil {
+	if _, err := j.Assess(context.Background(), nil, nil); err == nil {
 		t.Error("expected error on non-200 status")
+	}
+}
+
+func TestBuildPrompt_SkillNote(t *testing.T) {
+	p := BuildPrompt([]Turn{{Role: "user", Text: "do the thing"}}, []string{"review-checkpoint"})
+	if !strings.Contains(p, "review-checkpoint") || !strings.Contains(strings.ToLower(p), "skill") {
+		t.Errorf("prompt missing skill note:\n%s", p)
 	}
 }

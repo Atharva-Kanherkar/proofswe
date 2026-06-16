@@ -33,14 +33,14 @@ type HTTPJudge struct {
 	BaseURL string
 }
 
-func (j HTTPJudge) Assess(ctx context.Context, turns []Turn) (Verdict, error) {
+func (j HTTPJudge) Assess(ctx context.Context, turns []Turn, skills []string) (Verdict, error) {
 	if j.APIKey == "" {
 		return Verdict{}, fmt.Errorf("judge: missing API key")
 	}
 	reqBody, err := json.Marshal(map[string]any{
 		"model":      orDefault(j.Model, DefaultModel),
 		"max_tokens": 256,
-		"messages":   []map[string]string{{"role": "user", "content": BuildPrompt(turns)}},
+		"messages":   []map[string]string{{"role": "user", "content": BuildPrompt(turns, skills)}},
 	})
 	if err != nil {
 		return Verdict{}, err

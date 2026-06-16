@@ -42,7 +42,7 @@ type Verdict struct {
 
 // Judge assesses a (blinded) conversation into a Verdict.
 type Judge interface {
-	Assess(ctx context.Context, turns []Turn) (Verdict, error)
+	Assess(ctx context.Context, turns []Turn, skills []string) (Verdict, error)
 }
 
 // FakeJudge returns a canned verdict; used for offline tests and as a stand-in
@@ -52,7 +52,7 @@ type FakeJudge struct {
 	Err error
 }
 
-func (f FakeJudge) Assess(context.Context, []Turn) (Verdict, error) { return f.V, f.Err }
+func (f FakeJudge) Assess(context.Context, []Turn, []string) (Verdict, error) { return f.V, f.Err }
 
 const maxTurnChars = 1500
 
@@ -67,9 +67,13 @@ Reply with ONLY this JSON: {"outcome":"accepted|corrected|abandoned","correction
 
 // BuildPrompt renders the blinded judging prompt. The model id never appears; the
 // assistant is labeled generically.
-func BuildPrompt(turns []Turn) string {
+func BuildPrompt(turns []Turn, skills []string) string {
 	var b strings.Builder
 	b.WriteString(instruction)
+	if len(skills) > 0 {
+		b.WriteString("\n\nNote: the developer invoked skill(s): " + strings.Join(skills, ", ") +
+			". Skills are human-authored expert scaffolding — judge ONLY the developer's own reactions, not the skill's structure or quality.")
+	}
 	b.WriteString("\n\n--- transcript ---")
 	for _, t := range turns {
 		role := "assistant"
