@@ -35,6 +35,29 @@ func TestExtractTranscriptSignals_SkillDetectedAndExcluded(t *testing.T) {
 	}
 }
 
+func TestExtractTranscriptSignals_InterruptionStrippedAndFlagged(t *testing.T) {
+	fixture := writeTranscript(t,
+		`{"type":"started","uuid":"s","sessionId":"intr","timestamp":"2026-06-01T00:00:00Z"}`,
+		`{"type":"assistant","uuid":"a0","sessionId":"intr","timestamp":"2026-06-01T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"working on it"}]}}`,
+		`{"type":"user","uuid":"u1","sessionId":"intr","timestamp":"2026-06-01T00:00:02Z","message":{"role":"user","content":"[Request interrupted by user]"}}`,
+		`{"type":"user","uuid":"u2","sessionId":"intr","timestamp":"2026-06-01T00:00:03Z","message":{"role":"user","content":"do it properly this time"}}`,
+		`{"type":"result","uuid":"res","sessionId":"intr","timestamp":"2026-06-01T00:00:04Z","subtype":"success"}`,
+	)
+
+	got := extractTranscriptSignals("claudecode", fixture)
+
+	if got.Interruptions != 1 {
+		t.Errorf("interruptions = %d, want 1", got.Interruptions)
+	}
+	// Only "do it properly this time" is a real turn; the interruption marker is not.
+	if got.HumanTurns != 1 {
+		t.Errorf("human_turns = %d, want 1 (interruption excluded)", got.HumanTurns)
+	}
+	if !hasEvidence(got.Evidence, "interruption", "true") {
+		t.Fatalf("missing interruption evidence: %+v", got.Evidence)
+	}
+}
+
 func TestExtractTranscriptSignals_SkillDetectedWithWindowsPath(t *testing.T) {
 	fixture := writeTranscript(t,
 		`{"type":"started","uuid":"s","sessionId":"skill-win","timestamp":"2026-06-01T00:00:00Z"}`,

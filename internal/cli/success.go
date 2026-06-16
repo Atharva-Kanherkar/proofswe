@@ -29,6 +29,9 @@ var (
 	// skill: …/.claude/skills/<name>"). Skill content is human-authored scaffolding,
 	// not the developer's own voice.
 	skillRe = regexp.MustCompile(`(?i)base directory for this skill:\s*[^\r\n]*[\\/]skills[\\/]([A-Za-z0-9._-]+)\b`)
+	// interruptRe detects the marker Claude Code records when the developer cuts
+	// the agent off mid-action — a frustration signal, not a typed prompt.
+	interruptRe = regexp.MustCompile(`(?i)\[request interrupted by user`)
 )
 
 type toolResultFact struct {
@@ -66,6 +69,7 @@ type successScanState struct {
 	editCount       int
 	diffHunks       int
 	humanTurns      int
+	interruptions   int
 	skills          []string
 	skillSet        map[string]bool
 }
@@ -302,6 +306,11 @@ func (s *successScanState) recordUserMessage(text string, offset int64) {
 		s.recordSkill(skill, offset)
 		return
 	}
+	if interruptRe.MatchString(text) {
+		s.interruptions++
+		s.addEvidence("interruption", "true", offset, "developer interrupted the agent")
+		return
+	}
 	if strings.TrimSpace(text) == "" {
 		return
 	}
@@ -361,6 +370,7 @@ func finalizeExtractedSignals(state successScanState) score.ExtractedSignals {
 		LandingQuality:    landingQuality,
 		Termination:       termination,
 		HumanTurns:        state.humanTurns,
+		Interruptions:     state.interruptions,
 		HumanCorrections:  evidenceCount(state.evidence, "human_correction"),
 		HumanAcceptances:  evidenceCount(state.evidence, "human_acceptance"),
 		ReworkCount:       rework,
