@@ -74,8 +74,11 @@ func runScoreCommand(cfg Config, args []string) error {
 	}
 
 	// Deterministic success signals (objective-first): tests/build/lint passed,
-	// committed/pushed/PR, clean termination — all read from the transcript.
-	sig.Verification, sig.Landed, sig.Terminated = successFactsFromTranscript(harness, path)
+	// committed/pushed/PR, clean termination, and benchmark signal evidence —
+	// all read from the transcript.
+	extracted := extractTranscriptSignals(harness, path)
+	sig.Verification, sig.Landed, sig.Terminated = successFactsFromExtracted(extracted)
+	sig.Extracted = &extracted
 
 	if useJudge {
 		j, err := newScoreJudge(cfg)

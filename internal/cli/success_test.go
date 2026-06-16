@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Atharva-Kanherkar/proofswe/internal/score"
 )
 
 func TestSuccessFacts_Verified(t *testing.T) {
@@ -104,6 +107,99 @@ func TestSuccessFacts_CodexFailedCommitDoesNotLand(t *testing.T) {
 	}
 }
 
+func TestExtractTranscriptSignals_VerifiedAfterEditAndScope(t *testing.T) {
+	fixture := writeTranscript(t,
+		`{"type":"started","uuid":"s","sessionId":"scope","timestamp":"2026-06-01T00:00:00Z"}`,
+		`{"type":"assistant","uuid":"a1","sessionId":"scope","timestamp":"2026-06-01T00:00:01Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"e1","name":"Edit","input":{"file":"internal/parser/parser_test.go","old_string":"old","new_string":"new"}}]}}`,
+		`{"type":"user","uuid":"r1","sessionId":"scope","timestamp":"2026-06-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"e1","is_error":false,"content":"@@ -1 +1 @@\n-old\n+new"}]}}`,
+		`{"type":"assistant","uuid":"a2","sessionId":"scope","timestamp":"2026-06-01T00:00:03Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"v1","name":"Bash","input":{"command":"go test ./..."}}]}}`,
+		`{"type":"user","uuid":"r2","sessionId":"scope","timestamp":"2026-06-01T00:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"v1","is_error":false,"content":"ok github.com/acme/app 0.1s"}]}}`,
+		`{"type":"result","uuid":"res","sessionId":"scope","timestamp":"2026-06-01T00:00:05Z","subtype":"success"}`,
+	)
+
+	got := extractTranscriptSignals("claudecode", fixture)
+	if got.Version != 1 {
+		t.Fatalf("version = %d, want 1", got.Version)
+	}
+	if got.Verification != "passed" || !got.VerifiedAfterEdit {
+		t.Fatalf("verification = %q, verified_after_edit = %t", got.Verification, got.VerifiedAfterEdit)
+	}
+	if got.Scope.FilesTouched != 1 || got.Scope.TestFilesTouched != 1 || got.Scope.EditCount != 1 || got.Scope.DiffHunks != 1 {
+		t.Fatalf("scope = %+v, want one touched test file/edit/hunk", got.Scope)
+	}
+	if !hasEvidence(got.Evidence, "verification", "passed") || !hasEvidence(got.Evidence, "scope", "edit") {
+		t.Fatalf("missing expected evidence: %+v", got.Evidence)
+	}
+}
+
+func TestExtractTranscriptSignals_HumanCorrectionAndAcceptance(t *testing.T) {
+	fixture := writeTranscript(t,
+		`{"type":"started","uuid":"s","sessionId":"reaction","timestamp":"2026-06-01T00:00:00Z"}`,
+		`{"type":"assistant","uuid":"a1","sessionId":"reaction","timestamp":"2026-06-01T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"I changed it."}]}}`,
+		`{"type":"user","uuid":"u1","sessionId":"reaction","timestamp":"2026-06-01T00:00:02Z","message":{"role":"user","content":"That failed, fix it."}}`,
+		`{"type":"assistant","uuid":"a2","sessionId":"reaction","timestamp":"2026-06-01T00:00:03Z","message":{"role":"assistant","content":[{"type":"text","text":"Fixed."}]}}`,
+		`{"type":"user","uuid":"u2","sessionId":"reaction","timestamp":"2026-06-01T00:00:04Z","message":{"role":"user","content":"Looks good, thanks."}}`,
+	)
+
+	got := extractTranscriptSignals("claudecode", fixture)
+	if got.HumanCorrections != 1 || got.HumanAcceptances != 1 {
+		t.Fatalf("corrections=%d acceptances=%d, want 1/1", got.HumanCorrections, got.HumanAcceptances)
+	}
+	if !hasEvidence(got.Evidence, "human_correction", "true") || !hasEvidence(got.Evidence, "human_acceptance", "true") {
+		t.Fatalf("missing reaction evidence: %+v", got.Evidence)
+	}
+}
+
+func TestExtractTranscriptSignals_ReworkAndLandingQuality(t *testing.T) {
+	fixture := writeTranscript(t,
+		`{"type":"started","uuid":"s","sessionId":"rework","timestamp":"2026-06-01T00:00:00Z"}`,
+		`{"type":"assistant","uuid":"a1","sessionId":"rework","timestamp":"2026-06-01T00:00:01Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"e1","name":"Edit","input":{"file":"internal/parser/parser.go"}}]}}`,
+		`{"type":"user","uuid":"r1","sessionId":"rework","timestamp":"2026-06-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"e1","is_error":false,"content":"applied"}]}}`,
+		`{"type":"assistant","uuid":"a2","sessionId":"rework","timestamp":"2026-06-01T00:00:03Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"e2","name":"Edit","input":{"file":"internal/parser/parser.go"}}]}}`,
+		`{"type":"user","uuid":"r2","sessionId":"rework","timestamp":"2026-06-01T00:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"e2","is_error":false,"content":"applied"}]}}`,
+		`{"type":"assistant","uuid":"a3","sessionId":"rework","timestamp":"2026-06-01T00:00:05Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"c1","name":"Bash","input":{"command":"git commit -am nope"}}]}}`,
+		`{"type":"user","uuid":"r3","sessionId":"rework","timestamp":"2026-06-01T00:00:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","is_error":true,"content":"nothing to commit"}]}}`,
+	)
+
+	got := extractTranscriptSignals("claudecode", fixture)
+	if got.ReworkCount != 1 {
+		t.Fatalf("rework = %d, want 1", got.ReworkCount)
+	}
+	if got.LandingQuality != "failed" {
+		t.Fatalf("landing_quality = %q, want failed", got.LandingQuality)
+	}
+}
+
+func TestScoreCommand_JSONIncludesExtractedSignals(t *testing.T) {
+	fixture := filepath.Join("testdata", "score", "verified.jsonl")
+	out, err := runScore(t, "--json", fixture)
+	if err != nil {
+		t.Fatalf("score: %v", err)
+	}
+	var got struct {
+		Signals struct {
+			Extracted struct {
+				Version        int    `json:"version"`
+				Verification   string `json:"verification"`
+				LandingQuality string `json:"landing_quality"`
+				Evidence       []struct {
+					Signal string `json:"signal"`
+					Offset int64  `json:"offset"`
+				} `json:"evidence"`
+			} `json:"extracted"`
+		} `json:"signals"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode score json: %v\n%s", err, out)
+	}
+	if got.Signals.Extracted.Version != 1 || got.Signals.Extracted.Verification != "passed" || got.Signals.Extracted.LandingQuality != "succeeded" {
+		t.Fatalf("extracted = %+v", got.Signals.Extracted)
+	}
+	if len(got.Signals.Extracted.Evidence) == 0 {
+		t.Fatal("expected extracted evidence")
+	}
+}
+
 func TestVerifyOutcome_LastRunWins(t *testing.T) {
 	// fail then a later pass → final state is passed.
 	ids := []string{"a", "b"}
@@ -143,4 +239,13 @@ func writeTranscript(t *testing.T, lines ...string) string {
 		t.Fatalf("write transcript: %v", err)
 	}
 	return path
+}
+
+func hasEvidence(evidence []score.SignalEvidence, signal, value string) bool {
+	for _, ev := range evidence {
+		if ev.Signal == signal && ev.Value == value {
+			return true
+		}
+	}
+	return false
 }

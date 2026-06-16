@@ -52,6 +52,8 @@ type Signals struct {
 	// judge didn't run. score stays judge-agnostic by taking the number.
 	Success      *float64 `json:"judge_success,omitempty"`
 	SuccessLabel string   `json:"judge_label,omitempty"`
+
+	Extracted *ExtractedSignals `json:"extracted,omitempty"`
 }
 
 // Baselines are the soft reference points a single session is scored against.
