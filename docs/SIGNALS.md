@@ -32,21 +32,18 @@ Every signal is exactly one of three roles, handled differently:
 
 ## Outcome — score these
 
+All read from the transcript at session end — no longitudinal tracking, no waiting on a repo.
+
 | signal | why it matters | source | type |
 |---|---|---|---|
-| PR merged | the gold oracle on OSS — a human reviewer accepted it | ⊕ | binary |
-| PR review outcome | approvals / change-requests / review comments — *graded* human judgment, not just merged y/n | ⊕🤖 | ordinal |
+| tests / build / lint passed | the agent ran them *in-session* and they passed — the strongest objective in-transcript signal | 🤖 | binary |
 | instruction-following | did it actually do what the prompt asked (vs adjacent / ignored) | 🤖 | ordinal |
-| code quality | tests written, readable, no obvious vulns/secrets introduced | 🤖 | ordinal |
+| code quality | tests written, readable, no obvious vulns/secrets in the produced diff | 🤖 | ordinal |
 | satisfaction (inferred) | the ~95% of sessions with no explicit rating still have a felt outcome | 🤖 | ordinal |
-| explicit user rating | most direct satisfaction label, where it exists | ⊕ | ordinal |
+| developer accepted | in-session sign-off — "lgtm", ran it, moved on without correction (the calibration label) | 🤖 | binary |
+| explicit user rating | most direct satisfaction signal, where it appears in the session | ⊕ | ordinal |
 | abandonment | dropped mid-task / rage-quit = bad ending | 🤖 | binary |
-| committed | agent's lines reached a commit — first "kept" gate | ✓ | binary |
-| survival @1h/24h/7d/30d | did the work persist or get ripped out — **one** signal, not the metric | ✓ | fraction |
-| reverted | explicit undo of agent work — clean negative | 🤖 | binary |
-| churn-after-keep | kept-but-constantly-rewritten is worse than kept-and-stable | ⊕ | fraction |
-| tests / build / lint pass | objective correctness — but needs *execution*: expensive, OSS-subset only | ⊕ | binary |
-| follow-on build | user continued *from* this work next session → good enough to build on | 🤖 | binary |
+| ended with a commit/push | the session reached a commit — an in-transcript *action*, not tracked forward | ✓ | binary |
 
 ## Cost — trade off, never add to the score
 
@@ -81,21 +78,20 @@ Every signal is exactly one of three roles, handled differently:
 ## What we build on first (priority order)
 
 1. **model · user · repo · language · task type** (context — who / what / which)
-2. **instruction-following · code quality · PR review outcome · inferred satisfaction** (outcome — the signals that need us to read the content, and the ones that actually separate models)
-3. **PR merged · committed · survival** (outcome — objective anchors)
+2. **instruction-following · code quality · inferred satisfaction** (outcome — the content-read signals that most separate models)
+3. **tests passed in-session · ended with a commit · clean termination** (outcome — the objective in-transcript anchors)
 4. **$ · tool calls · turns** (cost — the trade-off axis)
 
 ## Treat with care
 
-- **keeprate / survival** — trivial lines (`}`, `return nil`, imports) survive regardless; its validity *as a quality signal* is the still-unverified assumption tracked in [#35](https://github.com/Atharva-Kanherkar/proofswe/issues/35). Keep it; don't headline it.
-- **tests / build pass** — the cleanest outcome, but capturing it means *running* code: expensive, invasive, usually impossible on private repos. Treat as an OSS-subset signal, not universal.
-- **explicit rating** — the best label but sparse; lean on inferred satisfaction for coverage and use ratings to calibrate it.
+- **tests / build / lint** — only counts when the agent actually *ran* them in the session (visible in tool outputs); absence is "unknown," not failure. Not every session runs tests.
+- **developer accepted** — strong but flow-dependent: solo/personal sessions sign off differently than team reviews. It's the calibration label, so its gameability matters (METHODOLOGY §3.2).
+- **explicit rating** — the most direct signal but sparse; lean on inferred satisfaction for coverage and use ratings to calibrate it.
 
 ## Proposed additions (flagged for review)
 
-1. **follow-on build** — did the user continue *from* this work next session rather than redo it? Cheap, hard to game, "good enough to build on."
-2. **self-correction ratio** — when a tool call errored, did the *agent* recover or did the *human* fix it? Separates autonomous from needs-babysitting.
-3. **rework / thrash** — same file/line edited repeatedly *within* the session — an in-session "flailing" proxy that doesn't wait 30 days.
+1. **self-correction ratio** — when a tool call errored, did the *agent* recover or did the *human* fix it? Separates autonomous from needs-babysitting.
+2. **rework / thrash** — same file/line edited repeatedly *within* the session — an in-session "flailing" proxy.
 
 ## Related issues
 
