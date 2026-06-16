@@ -12,14 +12,33 @@ import (
 // We match the agent's own commands and their results: did it run tests/build/lint
 // and pass, did it commit/push/open a PR, and did the session end cleanly.
 var (
-	verifyCmdRe = regexp.MustCompile(`(?i)(go test|go build|go vet|gotestsum|pytest|py\.test|npm (run )?(test|build)|yarn (test|build)|pnpm (test|build)|jest|vitest|mocha|cargo (test|build|clippy)|make( |$)|tsc(\s|$)|eslint|ruff|flake8|mypy|golangci-lint|rubocop|phpunit|gradle (test|build)|mvn (test|verify)|dotnet test|ctest)`)
-	landCmdRe   = regexp.MustCompile(`(?i)(git commit|git push|gh pr create)`)
-	failureRe   = regexp.MustCompile(`(?i)(\bFAIL\b|FAILED|failing|tests? failed|exit status [1-9]|exit code [1-9]|Traceback|panic:|\berror:)`)
+	verifyCmdRe     = regexp.MustCompile(`(?i)(go test|go build|go vet|gotestsum|pytest|py\.test|npm (run )?(test|build)|yarn (test|build)|pnpm (test|build)|jest|vitest|mocha|cargo (test|build|clippy)|make( |$)|tsc(\s|$)|eslint|ruff|flake8|mypy|golangci-lint|rubocop|phpunit|gradle (test|build)|mvn (test|verify)|dotnet test|ctest)`)
+	landCmdRe       = regexp.MustCompile(`(?i)(git commit|git push|gh pr create)`)
+	nonZeroExitRe   = regexp.MustCompile(`(?i)(exit status|exit code|exited with code) [1-9]`)
+	zeroExitRe      = regexp.MustCompile(`(?i)(exit status|exit code|exited with code) 0`)
+	failureSignalRe = regexp.MustCompile(`(?im)(^|\n)FAIL(\s|$)|(^|\n)FAILED(\s|$)|[1-9][0-9]*\s+(failed|failures?|failing)|Traceback|panic:|\berror:`)
 )
 
 type toolResultFact struct {
 	isError bool
 	text    string
+}
+
+type successScanState struct {
+	verifyIDs        []string
+	landIDs          []string
+	results          map[string]toolResultFact
+	pendingToolCalls map[string]struct{}
+	prLinked         bool
+	lastResultErr    *bool
+	terminal         *bool
+}
+
+func newSuccessScanState() successScanState {
+	return successScanState{
+		results:          map[string]toolResultFact{},
+		pendingToolCalls: map[string]struct{}{},
+	}
 }
 
 // successFactsFromTranscript returns the deterministic success signals:
@@ -32,10 +51,7 @@ func successFactsFromTranscript(harness, path string) (verification string, land
 	}
 	defer func() { _ = f.Close() }()
 
-	var verifyIDs []string
-	results := map[string]toolResultFact{}
-	var lastResultErr *bool
-	var terminal *bool
+	state := newSuccessScanState()
 
 	_, _ = reader.ReadNewLines(f, 0, reader.Options{}, func(line []byte, _ int64) error {
 		var raw map[string]any
@@ -44,33 +60,37 @@ func successFactsFromTranscript(harness, path string) (verification string, land
 		}
 		switch harness {
 		case "claudecode":
-			scanClaudeSuccess(raw, &verifyIDs, results, &landed, &lastResultErr, &terminal)
+			scanClaudeSuccess(raw, &state)
 		case "codex":
-			scanCodexSuccess(raw, &verifyIDs, results, &landed, &lastResultErr)
+			scanCodexSuccess(raw, &state)
 		}
 		return nil
 	})
 
-	verification = verifyOutcome(verifyIDs, results)
+	verification = verifyOutcome(state.verifyIDs, state.results)
+	landed = state.prLinked || landOutcome(state.landIDs, state.results)
 	switch {
-	case terminal != nil:
-		terminated = terminal
-	case lastResultErr != nil:
-		clean := !*lastResultErr
+	case state.terminal != nil:
+		terminated = state.terminal
+	case len(state.pendingToolCalls) > 0:
+		clean := false
+		terminated = &clean
+	case state.lastResultErr != nil:
+		clean := !*state.lastResultErr
 		terminated = &clean
 	}
 	return verification, landed, terminated
 }
 
-func scanClaudeSuccess(raw map[string]any, verifyIDs *[]string, results map[string]toolResultFact, landed *bool, lastResultErr **bool, terminal **bool) {
+func scanClaudeSuccess(raw map[string]any, state *successScanState) {
 	switch typ, _ := raw["type"].(string); typ {
 	case "pr-link":
-		*landed = true
+		state.prLinked = true
 		return
 	case "result":
 		if sub, _ := raw["subtype"].(string); sub != "" {
 			clean := sub == "success"
-			*terminal = &clean
+			state.terminal = &clean
 		}
 		return
 	}
@@ -83,45 +103,53 @@ func scanClaudeSuccess(raw map[string]any, verifyIDs *[]string, results map[stri
 			id, _ := block["id"].(string)
 			cmd, _ := block["name"].(string)
 			cmd += " " + stringifyJSON(block["input"])
+			if id != "" {
+				state.pendingToolCalls[id] = struct{}{}
+			}
 			if verifyCmdRe.MatchString(cmd) {
-				*verifyIDs = append(*verifyIDs, id)
+				state.verifyIDs = append(state.verifyIDs, id)
 			}
 			if landCmdRe.MatchString(cmd) {
-				*landed = true
+				state.landIDs = append(state.landIDs, id)
 			}
 		case "tool_result":
 			id, _ := block["tool_use_id"].(string)
 			isErr, _ := block["is_error"].(bool)
-			results[id] = toolResultFact{isError: isErr, text: contentText(block["content"])}
+			state.results[id] = toolResultFact{isError: isErr, text: contentText(block["content"])}
+			delete(state.pendingToolCalls, id)
 			e := isErr
-			*lastResultErr = &e
+			state.lastResultErr = &e
 		}
 	}
 }
 
-func scanCodexSuccess(raw map[string]any, verifyIDs *[]string, results map[string]toolResultFact, landed *bool, lastResultErr **bool) {
+func scanCodexSuccess(raw map[string]any, state *successScanState) {
 	if typ, _ := raw["type"].(string); typ != "response_item" {
 		return
 	}
 	payload, _ := raw["payload"].(map[string]any)
 	switch payload["type"] {
-	case "function_call":
+	case "function_call", "custom_tool_call", "web_search_call", "tool_search_call":
 		id, _ := payload["call_id"].(string)
 		cmd, _ := payload["name"].(string)
 		cmd += " " + stringifyJSON(payload["arguments"])
+		if id != "" {
+			state.pendingToolCalls[id] = struct{}{}
+		}
 		if verifyCmdRe.MatchString(cmd) {
-			*verifyIDs = append(*verifyIDs, id)
+			state.verifyIDs = append(state.verifyIDs, id)
 		}
 		if landCmdRe.MatchString(cmd) {
-			*landed = true
+			state.landIDs = append(state.landIDs, id)
 		}
-	case "function_call_output":
+	case "function_call_output", "custom_tool_call_output", "web_search_output", "tool_search_output":
 		id, _ := payload["call_id"].(string)
 		text := stringifyJSON(payload["output"])
-		isErr := failureRe.MatchString(text)
-		results[id] = toolResultFact{isError: isErr, text: text}
+		isErr := toolOutputFailed(text)
+		state.results[id] = toolResultFact{isError: isErr, text: text}
+		delete(state.pendingToolCalls, id)
 		e := isErr
-		*lastResultErr = &e
+		state.lastResultErr = &e
 	}
 }
 
@@ -136,8 +164,28 @@ func verifyOutcome(verifyIDs []string, results map[string]toolResultFact) string
 	if !ok {
 		return "" // ran but no captured result → unknown
 	}
-	if r.isError || failureRe.MatchString(r.text) {
+	if r.isError || toolOutputFailed(r.text) {
 		return "failed"
 	}
 	return "passed"
+}
+
+func landOutcome(landIDs []string, results map[string]toolResultFact) bool {
+	for _, id := range landIDs {
+		r, ok := results[id]
+		if ok && !r.isError && !toolOutputFailed(r.text) {
+			return true
+		}
+	}
+	return false
+}
+
+func toolOutputFailed(text string) bool {
+	if nonZeroExitRe.MatchString(text) {
+		return true
+	}
+	if zeroExitRe.MatchString(text) {
+		return false
+	}
+	return failureSignalRe.MatchString(text)
 }

@@ -49,7 +49,7 @@ func TestScore_SuccessIsPendingAndExcluded(t *testing.T) {
 		t.Fatal("success axis missing")
 	}
 	if succ.Present {
-		t.Error("success axis must be pending (Present=false) until the judge lands")
+		t.Error("success axis must be pending (Present=false) until deterministic signals or judge data exist")
 	}
 	// Composite must be the mean of the 3 present axes only, never dragged to 0 by pending success.
 	var sum float64
@@ -101,6 +101,16 @@ func TestDeterministicSuccess(t *testing.T) {
 			}
 			approx(t, "success", a.Score, tc.want)
 		})
+	}
+}
+
+func TestDeterministicSuccess_UnknownTerminationIsNotClean(t *testing.T) {
+	a, ok := axisByName(Score(Signals{Verification: "passed"}), "success")
+	if !ok || !a.Present {
+		t.Fatal("success should be present from verification")
+	}
+	if a.Detail != "tests passed · end unknown" {
+		t.Fatalf("detail = %q, want unknown termination detail", a.Detail)
 	}
 }
 

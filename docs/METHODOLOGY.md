@@ -62,9 +62,10 @@ So it reads as a benchmark, not a dashboard:
   scoring function. Academics cite what they can audit.
 
 The shipped CLI primitives map to this: `docs/SIGNALS.md` is the signal catalog,
-`proofswe score` computes the per-session axes, and `internal/judge` fills the
-success axis. They are the **per-instance evaluation function** — the leaderboard
-is the aggregate of running it across the corpus.
+`proofswe score` computes the per-session axes from transcript signals, and
+`internal/judge` is an optional human-reaction supplement for the success axis.
+They are the **per-instance evaluation function** — the leaderboard is the
+aggregate of running it across the corpus.
 
 ---
 
