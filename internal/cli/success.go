@@ -49,16 +49,18 @@ type successScanState struct {
 	editFileOffsets  map[string][]int64
 	evidence         []score.SignalEvidence
 
-	prLinked       bool
-	prLinkOffset   int64
-	lastResultErr  *bool
-	lastResultOff  int64
-	terminal       *bool
-	terminalOffset int64
-	seenAssistant  bool
-	sawEdit        bool
-	editCount      int
-	diffHunks      int
+	prLinked        bool
+	prLinkOffset    int64
+	lastResultErr   *bool
+	lastResultOff   int64
+	lastCallID      string
+	lastCallPending bool
+	terminal        *bool
+	terminalOffset  int64
+	seenAssistant   bool
+	sawEdit         bool
+	editCount       int
+	diffHunks       int
 }
 
 func newSuccessScanState() successScanState {
@@ -119,11 +121,13 @@ func extractTranscriptSignals(harness, path string) score.ExtractedSignals {
 func scanClaudeSuccess(raw map[string]any, offset int64, state *successScanState) {
 	switch typ, _ := raw["type"].(string); typ {
 	case "pr-link":
+		state.lastCallPending = false
 		state.prLinked = true
 		state.prLinkOffset = offset
 		state.addEvidence("landing_quality", "pr_link", offset, "pr-link record")
 		return
 	case "result":
+		state.lastCallPending = false
 		if sub, _ := raw["subtype"].(string); sub != "" {
 			clean := sub == "success"
 			state.terminal = &clean
@@ -134,6 +138,9 @@ func scanClaudeSuccess(raw map[string]any, offset int64, state *successScanState
 
 	msg, _ := raw["message"].(map[string]any)
 	items, _ := msg["content"].([]any)
+	if msg != nil {
+		state.lastCallPending = false
+	}
 	if typ, _ := raw["type"].(string); typ == "user" && len(toolResults(msg["content"])) == 0 {
 		state.scanUserReaction(contentText(msg["content"]), offset)
 	}
@@ -147,8 +154,7 @@ func scanClaudeSuccess(raw map[string]any, offset int64, state *successScanState
 			id, _ := block["id"].(string)
 			name, _ := block["name"].(string)
 			input := block["input"]
-			cmd := name + " " + stringifyJSON(input)
-			state.recordToolCall(id, name, input, cmd, offset)
+			state.recordToolCall(id, name, input, offset)
 		case "tool_result":
 			id, _ := block["tool_use_id"].(string)
 			isErr, _ := block["is_error"].(bool)
@@ -165,6 +171,7 @@ func scanCodexSuccess(raw map[string]any, offset int64, state *successScanState)
 	payload, _ := raw["payload"].(map[string]any)
 	switch payload["type"] {
 	case "message":
+		state.lastCallPending = false
 		role, _ := payload["role"].(string)
 		text := contentText(payload["content"])
 		if role == "assistant" {
@@ -177,8 +184,7 @@ func scanCodexSuccess(raw map[string]any, offset int64, state *successScanState)
 		id, _ := payload["call_id"].(string)
 		name, _ := payload["name"].(string)
 		args := payload["arguments"]
-		cmd := name + " " + stringifyJSON(args)
-		state.recordToolCall(id, name, args, cmd, offset)
+		state.recordToolCall(id, name, args, offset)
 	case "function_call_output", "custom_tool_call_output", "web_search_output", "tool_search_output":
 		id, _ := payload["call_id"].(string)
 		text := stringifyJSON(payload["output"])
@@ -186,27 +192,71 @@ func scanCodexSuccess(raw map[string]any, offset int64, state *successScanState)
 	}
 }
 
-func (s *successScanState) recordToolCall(id, name string, input any, command string, offset int64) {
+func (s *successScanState) recordToolCall(id, name string, input any, offset int64) {
 	if id != "" {
 		s.pendingToolCalls[id] = struct{}{}
+		s.lastCallID = id
+		s.lastCallPending = true
 	}
-	if verifyCmdRe.MatchString(command) {
-		s.verifyIDs = append(s.verifyIDs, id)
-		s.verifyAttempts = append(s.verifyAttempts, verifyAttempt{id: id, afterEdit: s.sawEdit})
-		s.addEvidence("verification", "ran", offset, name)
+	command, isExec := executedCommand(name, input)
+	if isExec {
+		if verifyCmdRe.MatchString(command) {
+			s.verifyIDs = append(s.verifyIDs, id)
+			s.verifyAttempts = append(s.verifyAttempts, verifyAttempt{id: id, afterEdit: s.sawEdit})
+			s.addEvidence("verification", "ran", offset, name)
+		}
+		if landCmdRe.MatchString(command) {
+			s.landIDs = append(s.landIDs, id)
+			s.addEvidence("landing_quality", "attempted", offset, name)
+		}
 	}
-	if landCmdRe.MatchString(command) {
-		s.landIDs = append(s.landIDs, id)
-		s.addEvidence("landing_quality", "attempted", offset, name)
-	}
-	if isEditTool(name) || editShellSignalRe.MatchString(command) {
+	if isEditTool(name) || (isExec && editShellSignalRe.MatchString(command)) {
 		s.recordEdit(id, input, command, offset)
 	}
+}
+
+func executedCommand(name string, input any) (string, bool) {
+	if !isExecTool(name) {
+		return "", false
+	}
+	command := commandField(input)
+	if command == "" {
+		return "", false
+	}
+	return command, true
+}
+
+func isExecTool(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	switch n {
+	case "bash", "shell", "sh", "zsh", "powershell", "exec", "exec_command", "run_command", "command":
+		return true
+	default:
+		return strings.HasSuffix(n, ".exec_command") || strings.HasSuffix(n, ".run_command")
+	}
+}
+
+func commandField(value any) string {
+	switch v := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"command", "cmd", "script"} {
+			if text, _ := v[key].(string); strings.TrimSpace(text) != "" {
+				return text
+			}
+		}
+	case string:
+		var decoded any
+		if json.Unmarshal([]byte(v), &decoded) == nil {
+			return commandField(decoded)
+		}
+	}
+	return ""
 }
 
 func (s *successScanState) recordToolResult(id string, isErr bool, text string, offset int64) {
 	s.results[id] = toolResultFact{isError: isErr, text: text, offset: offset}
 	delete(s.pendingToolCalls, id)
+	s.lastCallPending = false
 	if _, ok := s.editCallIDs[id]; ok {
 		s.diffHunks += countDiffHunks(text)
 	}
@@ -344,13 +394,18 @@ func landingQuality(s successScanState) (string, int64) {
 }
 
 func terminationQuality(s successScanState) (string, int64) {
-	switch {
-	case s.terminal != nil && *s.terminal:
-		return "clean", s.terminalOffset
-	case s.terminal != nil:
+	if s.terminal != nil {
+		if *s.terminal {
+			return "clean", s.terminalOffset
+		}
 		return "abandoned", s.terminalOffset
-	case len(s.pendingToolCalls) > 0:
-		return "abandoned", s.lastResultOff
+	}
+	if s.lastCallPending && s.lastCallID != "" {
+		if _, ok := s.pendingToolCalls[s.lastCallID]; ok {
+			return "abandoned", s.lastResultOff
+		}
+	}
+	switch {
 	case s.lastResultErr != nil && *s.lastResultErr:
 		return "abandoned", s.lastResultOff
 	case s.lastResultErr != nil:

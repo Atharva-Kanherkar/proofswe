@@ -132,6 +132,50 @@ func TestExtractTranscriptSignals_VerifiedAfterEditAndScope(t *testing.T) {
 	}
 }
 
+func TestExtractTranscriptSignals_NonExecToolInputDoesNotVerify(t *testing.T) {
+	fixture := writeTranscript(t,
+		`{"type":"started","uuid":"s","sessionId":"non-exec","timestamp":"2026-06-01T00:00:00Z"}`,
+		`{"type":"assistant","uuid":"a1","sessionId":"non-exec","timestamp":"2026-06-01T00:00:01Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"w1","name":"Write","input":{"file":"notes.md","content":"Remember to run go test ./... and gh pr create later."}}]}}`,
+		`{"type":"user","uuid":"r1","sessionId":"non-exec","timestamp":"2026-06-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","is_error":false,"content":"wrote notes.md"}]}}`,
+		`{"type":"assistant","uuid":"a2","sessionId":"non-exec","timestamp":"2026-06-01T00:00:03Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"p1","name":"ExitPlanMode","input":{"plan":"Run make test, then git push if everything passes."}}]}}`,
+		`{"type":"user","uuid":"r2","sessionId":"non-exec","timestamp":"2026-06-01T00:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"p1","is_error":false,"content":"plan accepted"}]}}`,
+		`{"type":"result","uuid":"res","sessionId":"non-exec","timestamp":"2026-06-01T00:00:05Z","subtype":"success"}`,
+	)
+
+	got := extractTranscriptSignals("claudecode", fixture)
+	if got.Verification != "" {
+		t.Fatalf("verification = %q, want none from non-exec tool input", got.Verification)
+	}
+	if got.LandingQuality != "none" {
+		t.Fatalf("landing_quality = %q, want none from non-exec tool input", got.LandingQuality)
+	}
+	if got.VerifiedAfterEdit {
+		t.Fatal("verified_after_edit = true, want false without an executed verification command")
+	}
+	if hasEvidence(got.Evidence, "verification", "ran") || hasEvidence(got.Evidence, "landing_quality", "attempted") {
+		t.Fatalf("non-exec input created command evidence: %+v", got.Evidence)
+	}
+}
+
+func TestSuccessFacts_EarlierPendingToolCallDoesNotAbandonPRLink(t *testing.T) {
+	fixture := writeTranscript(t,
+		`{"type":"started","uuid":"s","sessionId":"pending-pr","timestamp":"2026-06-01T00:00:00Z"}`,
+		`{"type":"assistant","uuid":"a1","sessionId":"pending-pr","timestamp":"2026-06-01T00:00:01Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"v1","name":"Bash","input":{"command":"go test ./..."}}]}}`,
+		`{"type":"pr-link","uuid":"pr","sessionId":"pending-pr","timestamp":"2026-06-01T00:00:02Z","url":"https://github.com/acme/app/pull/7"}`,
+	)
+
+	ver, landed, term := successFactsFromTranscript("claudecode", fixture)
+	if ver != "" {
+		t.Fatalf("verification = %q, want unknown when the test result is missing", ver)
+	}
+	if !landed {
+		t.Fatal("landed = false, want true from PR link")
+	}
+	if term != nil {
+		t.Fatalf("terminated = %v, want unknown when an older call is orphaned", term)
+	}
+}
+
 func TestExtractTranscriptSignals_HumanCorrectionAndAcceptance(t *testing.T) {
 	fixture := writeTranscript(t,
 		`{"type":"started","uuid":"s","sessionId":"reaction","timestamp":"2026-06-01T00:00:00Z"}`,
