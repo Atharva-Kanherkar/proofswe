@@ -25,6 +25,10 @@ var (
 	correctionRe      = regexp.MustCompile(`(?i)\b(wrong|try again|fix|failed|failing|error|broken|revert|undo|not what|doesn'?t|didn'?t|actually)\b`)
 	acceptanceRe      = regexp.MustCompile(`(?i)\b(lgtm|looks good|works|thank|thanks|great|perfect|ship it|nice|done)\b`)
 	editShellSignalRe = regexp.MustCompile(`(?i)\b(apply_patch|str_replace|cat >|tee .*>|python .*write_text|go fmt|gofmt -w|prettier --write)\b`)
+	// skillRe detects a Claude Code skill injection ("Base directory for this
+	// skill: …/.claude/skills/<name>"). Skill content is human-authored scaffolding,
+	// not the developer's own voice.
+	skillRe = regexp.MustCompile(`(?i)base directory for this skill:\s*[^\r\n]*[\\/]skills[\\/]([A-Za-z0-9._-]+)\b`)
 )
 
 type toolResultFact struct {
@@ -61,6 +65,9 @@ type successScanState struct {
 	sawEdit         bool
 	editCount       int
 	diffHunks       int
+	humanTurns      int
+	skills          []string
+	skillSet        map[string]bool
 }
 
 func newSuccessScanState() successScanState {
@@ -70,6 +77,7 @@ func newSuccessScanState() successScanState {
 		editCallIDs:      map[string]struct{}{},
 		editFiles:        map[string]int{},
 		editFileOffsets:  map[string][]int64{},
+		skillSet:         map[string]bool{},
 	}
 }
 
@@ -142,7 +150,7 @@ func scanClaudeSuccess(raw map[string]any, offset int64, state *successScanState
 		state.lastCallPending = false
 	}
 	if typ, _ := raw["type"].(string); typ == "user" && len(toolResults(msg["content"])) == 0 {
-		state.scanUserReaction(contentText(msg["content"]), offset)
+		state.recordUserMessage(contentText(msg["content"]), offset)
 	}
 	if typ, _ := raw["type"].(string); typ == "assistant" {
 		state.seenAssistant = true
@@ -178,7 +186,7 @@ func scanCodexSuccess(raw map[string]any, offset int64, state *successScanState)
 			state.seenAssistant = true
 		}
 		if role == "user" {
-			state.scanUserReaction(text, offset)
+			state.recordUserMessage(text, offset)
 		}
 	case "function_call", "custom_tool_call", "web_search_call", "tool_search_call":
 		id, _ := payload["call_id"].(string)
@@ -286,6 +294,37 @@ func (s *successScanState) recordEdit(id string, input any, command string, offs
 	}
 }
 
+// recordUserMessage classifies a user message: a skill injection is recorded as
+// a skill (context, not the developer's voice) and excluded from human turns and
+// reactions; a real prompt counts as a human turn and is scanned for corrections.
+func (s *successScanState) recordUserMessage(text string, offset int64) {
+	if skill := detectSkill(text); skill != "" {
+		s.recordSkill(skill, offset)
+		return
+	}
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	s.humanTurns++
+	s.scanUserReaction(text, offset)
+}
+
+func detectSkill(text string) string {
+	if m := skillRe.FindStringSubmatch(text); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+func (s *successScanState) recordSkill(name string, offset int64) {
+	if s.skillSet[name] {
+		return
+	}
+	s.skillSet[name] = true
+	s.skills = append(s.skills, name)
+	s.addEvidence("skill_used", name, offset, "skill injection")
+}
+
 func (s *successScanState) scanUserReaction(text string, offset int64) {
 	if !s.seenAssistant || strings.TrimSpace(text) == "" {
 		return
@@ -321,10 +360,13 @@ func finalizeExtractedSignals(state successScanState) score.ExtractedSignals {
 		Verification:      verification,
 		LandingQuality:    landingQuality,
 		Termination:       termination,
+		HumanTurns:        state.humanTurns,
 		HumanCorrections:  evidenceCount(state.evidence, "human_correction"),
 		HumanAcceptances:  evidenceCount(state.evidence, "human_acceptance"),
 		ReworkCount:       rework,
 		VerifiedAfterEdit: verifiedAfterEdit,
+		SkillsUsed:        append([]string(nil), state.skills...),
+		SkillAssisted:     len(state.skills) > 0,
 		Scope:             scope,
 		Evidence:          append([]score.SignalEvidence(nil), state.evidence...),
 	}

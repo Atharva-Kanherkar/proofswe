@@ -79,6 +79,7 @@ func runScoreCommand(cfg Config, args []string) error {
 	extracted := extractTranscriptSignals(harness, path)
 	sig.Verification, sig.Landed, sig.Terminated = successFactsFromExtracted(extracted)
 	sig.Extracted = &extracted
+	sig.Turns = extracted.HumanTurns // friction uses human turns only — skill injections excluded
 
 	if useJudge {
 		j, err := newScoreJudge(cfg)
@@ -86,7 +87,7 @@ func runScoreCommand(cfg Config, args []string) error {
 			return err
 		}
 		// The judge reads only the conversational turns, model identity stripped.
-		if v, err := j.Assess(context.Background(), transcriptTurns(harness, path)); err != nil {
+		if v, err := j.Assess(context.Background(), transcriptTurns(harness, path), extracted.SkillsUsed); err != nil {
 			_, _ = fmt.Fprintf(cfg.Stderr, "judge: %v (success axis left pending)\n", err)
 		} else {
 			s := judge.ScoreSuccess(v)
@@ -107,6 +108,9 @@ func runScoreCommand(cfg Config, args []string) error {
 		return writeScoreJSON(cfg.Stdout, result, sig)
 	}
 	writeScoreText(cfg.Stdout, result)
+	if extracted.SkillAssisted {
+		_, _ = fmt.Fprintf(cfg.Stdout, "  ⚠ skill-assisted: %s — model+skill; stratify, don't pool with unaided\n\n", strings.Join(extracted.SkillsUsed, ", "))
+	}
 	return nil
 }
 
@@ -190,9 +194,11 @@ func turnFromLine(harness string, line []byte) (judge.Turn, bool) {
 			if len(toolResults(msg["content"])) > 0 {
 				return judge.Turn{}, false // a tool result, not a developer prompt
 			}
-			if text := contentText(msg["content"]); text != "" {
-				return judge.Turn{Role: "user", Text: text}, true
+			text := contentText(msg["content"])
+			if text == "" || detectSkill(text) != "" {
+				return judge.Turn{}, false // empty, or a skill injection — not the developer's voice
 			}
+			return judge.Turn{Role: "user", Text: text}, true
 		case "assistant":
 			if text := contentText(msg["content"]); text != "" {
 				return judge.Turn{Role: "assistant", Text: text}, true
@@ -203,7 +209,11 @@ func turnFromLine(harness string, line []byte) (judge.Turn, bool) {
 			payload, _ := raw["payload"].(map[string]any)
 			if itemType, _ := payload["type"].(string); itemType == "message" {
 				role, _ := payload["role"].(string)
-				if text := contentText(payload["content"]); text != "" && (role == "user" || role == "assistant") {
+				text := contentText(payload["content"])
+				if text != "" && (role == "user" || role == "assistant") {
+					if role == "user" && detectSkill(text) != "" {
+						return judge.Turn{}, false // skill injection, not the developer's voice
+					}
 					return judge.Turn{Role: role, Text: text}, true
 				}
 			}
