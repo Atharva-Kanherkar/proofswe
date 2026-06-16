@@ -315,11 +315,6 @@ func verifyOutcome(verifyIDs []string, results map[string]toolResultFact) string
 	return "passed"
 }
 
-func landOutcome(landIDs []string, results map[string]toolResultFact) bool {
-	quality, _ := landingQuality(successScanState{landIDs: landIDs, results: results})
-	return quality == "succeeded"
-}
-
 func landingQuality(s successScanState) (string, int64) {
 	if s.prLinked {
 		return "pr_link", s.prLinkOffset
