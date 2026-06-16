@@ -61,16 +61,41 @@ func runScoreCommand(cfg Config, args []string) error {
 		return fmt.Errorf("%w: unknown harness %q", ErrUsage, harness)
 	}
 
-	// Hashes are not part of the score; an ephemeral salt keeps extraction
-	// self-contained and deterministic without touching the proofswe state dir.
+	result, sig, err := scoreTranscript(cfg, harness, path, useJudge)
+	if err != nil {
+		return err
+	}
+
+	if htmlPath != "" {
+		if err := os.WriteFile(htmlPath, []byte(renderScoreHTML(result)), 0o644); err != nil {
+			return fmt.Errorf("write html: %w", err)
+		}
+		_, _ = fmt.Fprintf(cfg.Stdout, "wrote %s\n", htmlPath)
+	}
+	if asJSON {
+		return writeScoreJSON(cfg.Stdout, result, sig)
+	}
+	writeScoreText(cfg.Stdout, result)
+	if sig.Extracted != nil && sig.Extracted.SkillAssisted {
+		_, _ = fmt.Fprintf(cfg.Stdout, "  ⚠ skill-assisted: %s — model+skill; stratify, don't pool with unaided\n\n", strings.Join(sig.Extracted.SkillsUsed, ", "))
+	}
+	return nil
+}
+
+// scoreTranscript turns a transcript into a scorecard plus the raw signals it
+// was built from. Shared by `proofswe score` and `proofswe contribute` so both
+// read the same deterministic axes (and, with useJudge, the same behavioral
+// success axis). Hashes are not part of the score, so an ephemeral salt keeps
+// extraction self-contained without touching the proofswe state dir.
+func scoreTranscript(cfg Config, harness, path string, useJudge bool) (score.Result, score.Signals, error) {
 	events, err := parseTranscript(harness, []byte("proofswe-score"), path)
 	if err != nil {
-		return fmt.Errorf("parse transcript: %w", err)
+		return score.Result{}, score.Signals{}, fmt.Errorf("parse transcript: %w", err)
 	}
 
 	sig := signalsFromEvents(events)
 	if sig.ToolCalls == 0 && sig.Turns == 0 && sig.InputTokens == 0 {
-		return fmt.Errorf("no scorable activity in %s (wrong harness, or empty transcript?)", path)
+		return score.Result{}, score.Signals{}, fmt.Errorf("no scorable activity in %s (wrong harness, or empty transcript?)", path)
 	}
 
 	// Deterministic success signals (objective-first): tests/build/lint passed,
@@ -84,7 +109,7 @@ func runScoreCommand(cfg Config, args []string) error {
 	if useJudge {
 		j, err := newScoreJudge(cfg)
 		if err != nil {
-			return err
+			return score.Result{}, score.Signals{}, err
 		}
 		// The judge reads only the conversational turns, model identity stripped.
 		if v, err := j.Assess(context.Background(), transcriptTurns(harness, path), extracted.SkillsUsed); err != nil {
@@ -96,22 +121,7 @@ func runScoreCommand(cfg Config, args []string) error {
 		}
 	}
 
-	result := score.Score(sig)
-
-	if htmlPath != "" {
-		if err := os.WriteFile(htmlPath, []byte(renderScoreHTML(result)), 0o644); err != nil {
-			return fmt.Errorf("write html: %w", err)
-		}
-		_, _ = fmt.Fprintf(cfg.Stdout, "wrote %s\n", htmlPath)
-	}
-	if asJSON {
-		return writeScoreJSON(cfg.Stdout, result, sig)
-	}
-	writeScoreText(cfg.Stdout, result)
-	if extracted.SkillAssisted {
-		_, _ = fmt.Fprintf(cfg.Stdout, "  ⚠ skill-assisted: %s — model+skill; stratify, don't pool with unaided\n\n", strings.Join(extracted.SkillsUsed, ", "))
-	}
-	return nil
+	return score.Score(sig), sig, nil
 }
 
 func signalsFromEvents(events []core.NormalizedEvent) score.Signals {
