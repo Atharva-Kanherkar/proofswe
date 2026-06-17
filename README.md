@@ -74,6 +74,31 @@ The leaderboard is marketing for the dataset. The dataset — real multi-turn
 trajectories with survival-based reward signals, openly licensed and auditable —
 is the research contribution the labs sit on privately and nobody else has.
 
+## Current Pipeline
+
+Install the CLI through npm:
+
+```sh
+npx proofswe version
+```
+
+Submit a real Codex or Claude Code transcript for server-side judging:
+
+```sh
+proofswe submit ~/.codex/sessions/.../rollout-*.jsonl --harness=codex
+```
+
+`submit` builds the same scrubbed reproducible task as `contribute`, sends it to
+the proofswe API, and prints the server scorecard. The contributor does not need
+an OpenAI or Anthropic key; the official judge runs on the proofswe server. Use
+`PROOFSWE_API_URL` or `--endpoint` to point at a staging server.
+
+Run the staging judge endpoint with server-side credentials:
+
+```sh
+OPENAI_API_KEY=... proofswe serve --addr=:8080 --judge-provider=openai
+```
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).

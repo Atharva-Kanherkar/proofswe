@@ -1,0 +1,9 @@
+{
+  "name": "@proofswe/darwin-arm64",
+  "version": "0.0.0-development",
+  "description": "Native proofswe binary for macOS arm64.",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin/proofswe"]
+}

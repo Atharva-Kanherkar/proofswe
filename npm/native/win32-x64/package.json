@@ -1,0 +1,9 @@
+{
+  "name": "@proofswe/win32-x64",
+  "version": "0.0.0-development",
+  "description": "Native proofswe binary for Windows x64.",
+  "license": "MIT",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/proofswe.exe"]
+}

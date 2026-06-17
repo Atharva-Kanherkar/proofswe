@@ -1,0 +1,9 @@
+{
+  "name": "@proofswe/linux-arm64",
+  "version": "0.0.0-development",
+  "description": "Native proofswe binary for Linux arm64.",
+  "license": "MIT",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "files": ["bin/proofswe"]
+}
