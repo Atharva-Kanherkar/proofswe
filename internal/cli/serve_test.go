@@ -430,8 +430,11 @@ func TestSubmitRateLimiter(t *testing.T) {
 	limiter := newSubmitRateLimiter(2, time.Minute)
 	req := httptest.NewRequest(http.MethodPost, "/v1/submissions", nil)
 	req.RemoteAddr = "203.0.113.10:1234"
-	if !limiter.allow(req) || !limiter.allow(req) {
-		t.Fatal("first two requests should pass")
+	if !limiter.allow(req) {
+		t.Fatal("first request should pass")
+	}
+	if !limiter.allow(req) {
+		t.Fatal("second request should pass")
 	}
 	if limiter.allow(req) {
 		t.Fatal("third request should be rate limited")
