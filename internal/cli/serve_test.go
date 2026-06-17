@@ -40,10 +40,12 @@ func mustCorpusTaskPath(t *testing.T, taskID string) string {
 
 func TestSubmissionHandler_QueuesAndPollsServerJudge(t *testing.T) {
 	var judgeCalls atomic.Int32
+	releaseJudge := make(chan struct{})
 	prev := newServerJudge
 	newServerJudge = func(Config, judgeOptions) (judge.Judge, error) {
-		return countingJudge{
-			calls: &judgeCalls,
+		return blockingJudge{
+			calls:   &judgeCalls,
+			release: releaseJudge,
 			verdict: judge.Verdict{
 				Outcome:     judge.OutcomeAccepted,
 				Corrections: 0,
@@ -71,7 +73,16 @@ func TestSubmissionHandler_QueuesAndPollsServerJudge(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/submissions", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(rr, req)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("POST did not return before judging was released")
+	}
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
@@ -82,12 +93,10 @@ func TestSubmissionHandler_QueuesAndPollsServerJudge(t *testing.T) {
 	if got.Status != submissionStatusQueued || got.Scorecard != nil {
 		t.Fatalf("response not queued: %+v", got)
 	}
-	if judgeCalls.Load() != 0 {
-		t.Fatalf("POST should not call judge inline, calls=%d", judgeCalls.Load())
-	}
 	if !strings.Contains(got.TaskID, "sha256:") {
 		t.Fatalf("task id not carried: %+v", got)
 	}
+	close(releaseJudge)
 
 	var polled submitResponse
 	deadline := time.Now().Add(2 * time.Second)
@@ -782,6 +791,26 @@ func (j countingJudge) Assess(context.Context, []judge.Turn, []string) (judge.Ve
 	j.calls.Add(1)
 	if j.delay > 0 {
 		time.Sleep(j.delay)
+	}
+	if j.err != nil {
+		return judge.Verdict{}, j.err
+	}
+	return j.verdict, nil
+}
+
+type blockingJudge struct {
+	calls   *atomic.Int32
+	release <-chan struct{}
+	verdict judge.Verdict
+	err     error
+}
+
+func (j blockingJudge) Assess(ctx context.Context, _ []judge.Turn, _ []string) (judge.Verdict, error) {
+	j.calls.Add(1)
+	select {
+	case <-j.release:
+	case <-ctx.Done():
+		return judge.Verdict{}, ctx.Err()
 	}
 	if j.err != nil {
 		return judge.Verdict{}, j.err
