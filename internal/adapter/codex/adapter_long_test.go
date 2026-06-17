@@ -21,7 +21,7 @@ func TestCaptureConstantMemoryLargeRollout(t *testing.T) {
 	}
 
 	const fileBytes int64 = 96 << 20 // 96 MB on one open turn
-	heapBudgetMB := uint64(32)      // O(1) capture stays tiny; buffering the turn would blow past this
+	heapBudgetMB := uint64(32)       // O(1) capture stays tiny; buffering the turn would blow past this
 	if runtime.GOOS == "darwin" {
 		// macOS arm64 CI has a slightly larger runtime/allocator floor. Keep the
 		// budget far below the rollout size so the test still catches buffering.
