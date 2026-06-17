@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/corpus"
 )
@@ -148,5 +149,40 @@ func TestSubmitTask_ServerError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "502") || !strings.Contains(err.Error(), "judge unavailable") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPollSubmission_WaitsThroughPublishingButStopsAtJudged(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, `{"submission_id":"sub_publish","status":"published","scorecard":{"composite":90},"github_path":"tasks/sha256/aa/task.json"}`)
+	}))
+	defer server.Close()
+
+	got, err := pollSubmission(t.Context(), server.URL, "", submitResponse{
+		SubmissionID: "sub_publish",
+		Status:       submissionStatusPublish,
+		URL:          server.URL,
+		Scorecard:    &submitScorecard{Composite: 90},
+	}, time.Second, time.Millisecond)
+	if err != nil {
+		t.Fatalf("poll publishing: %v", err)
+	}
+	if got.Status != submissionStatusPubDone || calls != 1 {
+		t.Fatalf("publishing poll status=%q calls=%d", got.Status, calls)
+	}
+
+	got, err = pollSubmission(t.Context(), server.URL, "", submitResponse{
+		SubmissionID: "sub_judged",
+		Status:       submissionStatusJudged,
+		URL:          server.URL,
+		Scorecard:    &submitScorecard{Composite: 81},
+	}, time.Second, time.Millisecond)
+	if err != nil {
+		t.Fatalf("poll judged: %v", err)
+	}
+	if got.Status != submissionStatusJudged || calls != 1 {
+		t.Fatalf("judged poll status=%q calls=%d", got.Status, calls)
 	}
 }

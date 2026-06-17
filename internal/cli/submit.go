@@ -33,12 +33,15 @@ type submitRequest struct {
 }
 
 type submitResponse struct {
-	SubmissionID string           `json:"submission_id,omitempty"`
-	TaskID       string           `json:"task_id,omitempty"`
-	Status       string           `json:"status,omitempty"`
-	URL          string           `json:"url,omitempty"`
-	Judge        submitJudge      `json:"judge,omitempty"`
-	Scorecard    *submitScorecard `json:"scorecard,omitempty"`
+	SubmissionID    string           `json:"submission_id,omitempty"`
+	TaskID          string           `json:"task_id,omitempty"`
+	Status          string           `json:"status,omitempty"`
+	URL             string           `json:"url,omitempty"`
+	GitHubPath      string           `json:"github_path,omitempty"`
+	GitHubPRURL     string           `json:"github_pr_url,omitempty"`
+	GitHubCommitSHA string           `json:"github_commit_sha,omitempty"`
+	Judge           submitJudge      `json:"judge,omitempty"`
+	Scorecard       *submitScorecard `json:"scorecard,omitempty"`
 }
 
 type submitJudge struct {
@@ -113,7 +116,7 @@ func runSubmitCommand(ctx context.Context, cfg Config, args []string) error {
 	if err != nil {
 		return err
 	}
-	if wait && resp.Scorecard == nil && resp.SubmissionID != "" && isPendingSubmissionStatus(resp.Status) {
+	if wait && resp.SubmissionID != "" && isPendingSubmissionStatus(resp.Status) && (resp.Scorecard == nil || isPendingPublishStatus(resp.Status)) {
 		if polled, err := pollSubmission(ctx, endpoint, token, resp, waitTimeout, pollInterval); err == nil {
 			resp = polled
 		} else if !asJSON {
@@ -200,7 +203,10 @@ func pollSubmission(ctx context.Context, endpoint, token string, initial submitR
 	defer ticker.Stop()
 	current := initial
 	for {
-		if current.Scorecard != nil || isTerminalSubmissionStatus(current.Status) {
+		if isTerminalSubmissionStatus(current.Status) {
+			return current, nil
+		}
+		if current.Scorecard != nil && !isPendingPublishStatus(current.Status) {
 			return current, nil
 		}
 		select {
@@ -243,7 +249,7 @@ func getSubmission(ctx context.Context, url, token string) (submitResponse, erro
 
 func isPendingSubmissionStatus(status string) bool {
 	switch status {
-	case "", submissionStatusQueued, submissionStatusJudging:
+	case "", submissionStatusQueued, submissionStatusJudging, submissionStatusPublish:
 		return true
 	default:
 		return false
@@ -252,11 +258,15 @@ func isPendingSubmissionStatus(status string) bool {
 
 func isTerminalSubmissionStatus(status string) bool {
 	switch status {
-	case submissionStatusJudged, "publishing", "published", submissionStatusFailed:
+	case submissionStatusPubDone, submissionStatusFailed:
 		return true
 	default:
 		return false
 	}
+}
+
+func isPendingPublishStatus(status string) bool {
+	return status == submissionStatusPublish
 }
 
 func printSubmitText(w io.Writer, r submitResponse) {
@@ -292,6 +302,12 @@ func printSubmitText(w io.Writer, r submitResponse) {
 		}
 	} else {
 		_, _ = fmt.Fprintln(w, "\n  official score pending server judge")
+	}
+	if r.GitHubPath != "" {
+		_, _ = fmt.Fprintf(w, "  corpus      %s\n", r.GitHubPath)
+	}
+	if r.GitHubPRURL != "" {
+		_, _ = fmt.Fprintf(w, "  corpus PR   %s\n", r.GitHubPRURL)
 	}
 	if r.URL != "" {
 		_, _ = fmt.Fprintf(w, "\n  %s\n", r.URL)

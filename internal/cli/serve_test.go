@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,21 @@ import (
 
 func serveTestConfig() Config {
 	return Config{Getenv: func(string) string { return "" }}
+}
+
+func corpusTaskForServe(ex score.ExtractedSignals, landed bool) corpus.Task {
+	task := corpus.FromCapture(reproducibleCaptureForServe(), ex, landed, nil, "", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	task.TaskID = corpusTaskID(task)
+	return task
+}
+
+func mustCorpusTaskPath(t *testing.T, taskID string) string {
+	t.Helper()
+	path, err := corpusTaskPath(taskID)
+	if err != nil {
+		t.Fatalf("path: %v", err)
+	}
+	return path
 }
 
 func TestSubmissionHandler_QueuesAndPollsServerJudge(t *testing.T) {
@@ -44,13 +60,13 @@ func TestSubmissionHandler_QueuesAndPollsServerJudge(t *testing.T) {
 		t.Fatalf("handler: %v", err)
 	}
 	defer cleanup()
-	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{
+	task := corpusTaskForServe(score.ExtractedSignals{
 		Verification:   "passed",
 		Termination:    "clean",
 		HumanTurns:     1,
 		Scope:          score.ScopeSignals{FilesTouched: 1},
 		LandingQuality: "commit",
-	}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	}, true)
 	body, _ := json.Marshal(submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/submissions", bytes.NewReader(body))
@@ -118,7 +134,7 @@ func TestSubmissionHandler_ParallelSubmissionsQueueWithoutInlineJudging(t *testi
 	}
 	defer cleanup()
 
-	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
 	body, _ := json.Marshal(submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
 	var wg sync.WaitGroup
 	errCh := make(chan string, 100)
@@ -191,7 +207,7 @@ func TestSubmissionHandler_TokenIsOptIn(t *testing.T) {
 	}
 	defer cleanup()
 
-	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
 	body, _ := json.Marshal(submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
 	req := httptest.NewRequest(http.MethodPost, "/v1/submissions", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
@@ -225,7 +241,7 @@ func TestSubmissionHandler_RequiresTokenWhenFlagEnabled(t *testing.T) {
 	}
 	defer cleanup()
 
-	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
 	body, _ := json.Marshal(submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
 	req := httptest.NewRequest(http.MethodPost, "/v1/submissions", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
@@ -267,15 +283,14 @@ func TestSubmissionHandler_RejectsInvalidTask(t *testing.T) {
 
 func TestMemorySubmissionStore_DedupesTasksAndRetriesJobs(t *testing.T) {
 	store := newMemorySubmissionStore()
-	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "@dev", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
+	task.Contributor = "@dev"
 	req := submitRequest{SchemaVersion: submitSchemaVersion, ClientVersion: "test", Task: task}
 	first, err := store.CreateSubmission(t.Context(), req)
 	if err != nil {
 		t.Fatalf("create first: %v", err)
 	}
-	changed := task
-	changed.Prompts[0].Text = "same task id, different retry transcript"
-	second, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, ClientVersion: "test", Task: changed})
+	second, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, ClientVersion: "retry", Task: task})
 	if err != nil {
 		t.Fatalf("create second: %v", err)
 	}
@@ -324,7 +339,7 @@ func TestMemorySubmissionStore_DedupesTasksAndRetriesJobs(t *testing.T) {
 
 func TestMemorySubmissionStore_MarksPermanentJudgeFailure(t *testing.T) {
 	store := newMemorySubmissionStore()
-	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
 	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -352,7 +367,7 @@ func TestMemorySubmissionStore_MarksPermanentJudgeFailure(t *testing.T) {
 
 func TestMemorySubmissionStore_IdempotentPayloadReusesSubmission(t *testing.T) {
 	store := newMemorySubmissionStore()
-	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
 	req := submitRequest{SchemaVersion: submitSchemaVersion, ClientVersion: "test", Task: task}
 	first, err := store.CreateSubmission(t.Context(), req)
 	if err != nil {
@@ -372,7 +387,7 @@ func TestMemorySubmissionStore_IdempotentPayloadReusesSubmission(t *testing.T) {
 
 func TestMemorySubmissionStore_ReclaimsStaleJudgingJob(t *testing.T) {
 	store := newMemorySubmissionStore()
-	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
 	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -400,9 +415,50 @@ func TestMemorySubmissionStore_ReclaimsStaleJudgingJob(t *testing.T) {
 	}
 }
 
+func TestMemorySubmissionStore_ClaimsJudgedJobForPublishRecovery(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
+	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "judge-worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim judge ok=%v err=%v", ok, err)
+	}
+	run := judgeRunRecord{
+		SubmissionID: job.SubmissionID,
+		Verdict:      judge.Verdict{Outcome: judge.OutcomeAccepted},
+		Scorecard:    &submitScorecard{Composite: 87},
+		Status:       submissionStatusJudged,
+		StartedAt:    time.Now(),
+		CompletedAt:  time.Now(),
+	}
+	if err := store.CompleteJudgeJob(t.Context(), job, run); err != nil {
+		t.Fatalf("complete judge: %v", err)
+	}
+	if _, ok, err := store.ClaimJudgeJob(t.Context(), "judge-worker", time.Now().Add(judgeVisibilityTimeout+time.Second)); err != nil || ok {
+		t.Fatalf("judged job should not be reclaimed as judge work ok=%v err=%v", ok, err)
+	}
+	publishJob, ok, err := store.ClaimPublishJob(t.Context(), "publish-worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim publish ok=%v err=%v", ok, err)
+	}
+	if publishJob.ID != job.ID || publishJob.Scorecard == nil || publishJob.Scorecard.Composite != 87 {
+		t.Fatalf("publish job = %+v", publishJob)
+	}
+	got, ok, err := store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get submission ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusPublish {
+		t.Fatalf("status = %q, want publishing", got.Status)
+	}
+}
+
 func TestMemorySubmissionStore_PermanentJudgeFailureDoesNotRetry(t *testing.T) {
 	store := newMemorySubmissionStore()
-	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
 	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -423,6 +479,24 @@ func TestMemorySubmissionStore_PermanentJudgeFailureDoesNotRetry(t *testing.T) {
 	}
 	if got.Status != submissionStatusFailed {
 		t.Fatalf("status = %q, want failed", got.Status)
+	}
+}
+
+func TestMemorySubmissionStore_RejectsTaskIDProvenanceConflict(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
+	if _, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	tampered := task
+	tampered.Model = "different-agent"
+	if _, _, err := store.GetTaskMapping(t.Context(), tampered); !errors.Is(err, errTaskIDConflict) {
+		t.Fatalf("GetTaskMapping error = %v, want errTaskIDConflict", err)
+	}
+	tampered = task
+	tampered.Prompts[0].Text = "different opening prompt"
+	if err := validateSubmittedTask(tampered); err == nil || !strings.Contains(err.Error(), "task_id mismatch") {
+		t.Fatalf("validate mutated task error = %v, want task_id mismatch", err)
 	}
 }
 
@@ -448,7 +522,7 @@ func TestSubmitRateLimiter(t *testing.T) {
 
 func TestSubmissionWorker_PersistsVerdictAfterContextCanceled(t *testing.T) {
 	store := newMemorySubmissionStore()
-	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
 	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -483,6 +557,218 @@ func TestPostgresSubmissionSchemaProtectsQueuedJobSnapshot(t *testing.T) {
 	if !strings.Contains(postgresMigrations, "payload_sha256 TEXT NOT NULL UNIQUE") {
 		t.Fatal("submissions must make payload_sha256 unique for idempotency")
 	}
+}
+
+func TestCorpusTaskPath(t *testing.T) {
+	path, err := corpusTaskPath("sha256:abcdef123456")
+	if err != nil {
+		t.Fatalf("path: %v", err)
+	}
+	if path != "tasks/sha256/ab/abcdef123456.json" {
+		t.Fatalf("path = %q", path)
+	}
+}
+
+func TestSubmissionWorker_PublishesJudgedTask(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
+	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	publisher := &fakeCorpusPublisher{mapping: corpusMapping{Path: mustCorpusTaskPath(t, task.TaskID), PRURL: "https://github.com/Atharva-Kanherkar/proofswe-corpus/pull/1", CommitSHA: "abc"}}
+	w := submissionWorker{
+		store:     store,
+		judge:     judge.FakeJudge{V: judge.Verdict{Outcome: judge.OutcomeAccepted}},
+		publisher: publisher,
+	}
+	w.process(t.Context(), job)
+	got, ok, err := store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusPubDone || got.GitHubPath == "" || got.GitHubPRURL == "" || got.Scorecard == nil {
+		t.Fatalf("published submission = %+v", got)
+	}
+	if publisher.calls.Load() != 1 {
+		t.Fatalf("publisher calls = %d, want 1", publisher.calls.Load())
+	}
+}
+
+func TestSubmissionWorker_DuplicateTaskReusesExistingMapping(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
+	first, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	publisher := &fakeCorpusPublisher{mapping: corpusMapping{Path: mustCorpusTaskPath(t, task.TaskID), PRURL: "https://github.com/Atharva-Kanherkar/proofswe-corpus/pull/1"}}
+	w := submissionWorker{store: store, judge: judge.FakeJudge{V: judge.Verdict{Outcome: judge.OutcomeAccepted}}, publisher: publisher}
+	job, _, _ := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	w.process(t.Context(), job)
+
+	second, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, ClientVersion: "retry", Task: task})
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim second ok=%v err=%v", ok, err)
+	}
+	w.process(t.Context(), job)
+	got, ok, err := store.GetSubmission(t.Context(), second.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get second ok=%v err=%v", ok, err)
+	}
+	if got.GitHubPRURL == "" || got.Status != submissionStatusPubDone {
+		t.Fatalf("second submission mapping = %+v", got)
+	}
+	if first.SubmissionID == second.SubmissionID {
+		t.Fatal("second distinct payload should have its own submission")
+	}
+	if publisher.calls.Load() != 1 {
+		t.Fatalf("duplicate task should reuse mapping; publisher calls = %d", publisher.calls.Load())
+	}
+}
+
+func TestSubmissionWorker_PublishFailureKeepsScorecardAndRetriesWithoutRejudge(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
+	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	var judgeCalls atomic.Int32
+	publisher := &fakeCorpusPublisher{
+		failures: 1,
+		mapping:  corpusMapping{Path: mustCorpusTaskPath(t, task.TaskID), PRURL: "https://github.com/Atharva-Kanherkar/proofswe-corpus/pull/1"},
+	}
+	w := submissionWorker{
+		store:     store,
+		judge:     countingJudge{calls: &judgeCalls, verdict: judge.Verdict{Outcome: judge.OutcomeAccepted}},
+		publisher: publisher,
+	}
+	w.process(t.Context(), job)
+	got, ok, err := store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get after failure ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusJudged || got.Scorecard == nil {
+		t.Fatalf("publish failure should preserve judged scorecard: %+v", got)
+	}
+	job, ok, err = store.ClaimPublishJob(t.Context(), "worker", time.Now().Add(judgeRetryBackoff+time.Second))
+	if err != nil || !ok {
+		t.Fatalf("claim retry ok=%v err=%v", ok, err)
+	}
+	w.process(t.Context(), job)
+	got, ok, err = store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get after retry ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusPubDone || got.GitHubPath == "" {
+		t.Fatalf("retry did not publish: %+v", got)
+	}
+	if judgeCalls.Load() != 1 {
+		t.Fatalf("retry should not rejudge; judge calls = %d", judgeCalls.Load())
+	}
+}
+
+func TestGitHubConflictClassification(t *testing.T) {
+	if !isGitHubConflict(githubAPIError{StatusCode: http.StatusUnprocessableEntity}) {
+		t.Fatal("422 should be treated as branch/PR conflict")
+	}
+	if !isGitHubNotFound(githubAPIError{StatusCode: http.StatusNotFound}) {
+		t.Fatal("404 should be treated as missing content")
+	}
+	if isPermanentPublishFailure(githubAPIError{StatusCode: http.StatusForbidden}) {
+		t.Fatal("403 should stay retryable because GitHub uses it for rate limits")
+	}
+}
+
+func TestGitHubCorpusPublisher_UsesRepositoryDefaultBranch(t *testing.T) {
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
+	path := mustCorpusTaskPath(t, task.TaskID)
+	var sawRefSHA, sawPutBranch, sawPullBase string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/corpus":
+			_, _ = w.Write([]byte(`{"default_branch":"trunk"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/corpus/git/ref/heads/trunk":
+			_, _ = w.Write([]byte(`{"object":{"sha":"base-sha"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/corpus/git/refs":
+			var body struct {
+				Ref string `json:"ref"`
+				SHA string `json:"sha"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode create ref: %v", err)
+			}
+			sawRefSHA = body.SHA
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/corpus/contents/"+path:
+			http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/corpus/contents/"+path:
+			var body struct {
+				Branch string `json:"branch"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode put content: %v", err)
+			}
+			sawPutBranch = body.Branch
+			_, _ = w.Write([]byte(`{"commit":{"sha":"commit-sha"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/corpus/pulls":
+			var body struct {
+				Base string `json:"base"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode create PR: %v", err)
+			}
+			sawPullBase = body.Base
+			_, _ = w.Write([]byte(`{"html_url":"https://github.com/acme/corpus/pull/7"}`))
+		default:
+			t.Fatalf("unexpected GitHub request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	publisher := githubCorpusPublisher{client: server.Client(), token: "token", repo: "acme/corpus", baseURL: server.URL}
+	mapping, err := publisher.Publish(t.Context(), task, &submitScorecard{Composite: 92})
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if mapping.Path != path || mapping.PRURL == "" || mapping.CommitSHA != "commit-sha" {
+		t.Fatalf("mapping = %+v", mapping)
+	}
+	if sawRefSHA != "base-sha" || sawPullBase != "trunk" {
+		t.Fatalf("default branch not honored: ref sha=%q pull base=%q", sawRefSHA, sawPullBase)
+	}
+	if !strings.HasPrefix(sawPutBranch, "proofswe/task/") {
+		t.Fatalf("put branch = %q", sawPutBranch)
+	}
+}
+
+type fakeCorpusPublisher struct {
+	calls    atomic.Int32
+	failures int
+	mapping  corpusMapping
+}
+
+func (p *fakeCorpusPublisher) Publish(context.Context, corpus.Task, *submitScorecard) (corpusMapping, error) {
+	p.calls.Add(1)
+	if p.failures > 0 {
+		p.failures--
+		return corpusMapping{}, errors.New("temporary github failure")
+	}
+	return p.mapping, nil
 }
 
 type countingJudge struct {

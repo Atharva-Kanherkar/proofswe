@@ -80,7 +80,7 @@ func newSubmissionHandlerWithContext(ctx context.Context, cfg Config, opts judge
 	workerWG.Add(1)
 	go func() {
 		defer workerWG.Done()
-		submissionWorker{store: store, judge: j, workerID: "proofswe-api", logger: slog.Default()}.Run(workerCtx)
+		submissionWorker{store: store, judge: j, publisher: newConfiguredCorpusPublisher(cfg), workerID: "proofswe-api", logger: slog.Default()}.Run(workerCtx)
 	}()
 	cleanup := func() {
 		cancelWorker()
@@ -127,11 +127,14 @@ func newSubmissionHandlerWithContext(ctx context.Context, cfg Config, opts judge
 			return
 		}
 		resp := submitResponse{
-			SubmissionID: rec.SubmissionID,
-			TaskID:       rec.TaskID,
-			Status:       rec.Status,
-			URL:          submissionURL("/v1/submissions", rec.SubmissionID),
-			Judge:        submitJudge{Status: "queued", Model: serverJudgeModel(j), Version: judgeVersion},
+			SubmissionID:    rec.SubmissionID,
+			TaskID:          rec.TaskID,
+			Status:          rec.Status,
+			URL:             submissionURL("/v1/submissions", rec.SubmissionID),
+			GitHubPath:      rec.GitHubPath,
+			GitHubPRURL:     rec.GitHubPRURL,
+			GitHubCommitSHA: rec.GitHubCommit,
+			Judge:           submitJudge{Status: "queued", Model: serverJudgeModel(j), Version: judgeVersion},
 		}
 		w.Header().Set("content-type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
@@ -160,12 +163,15 @@ func newSubmissionHandlerWithContext(ctx context.Context, cfg Config, opts judge
 			return
 		}
 		resp := submitResponse{
-			SubmissionID: rec.SubmissionID,
-			TaskID:       rec.TaskID,
-			Status:       rec.Status,
-			URL:          submissionURL("/v1/submissions", rec.SubmissionID),
-			Judge:        submitJudge{Status: rec.Status, Model: serverJudgeModel(j), Version: judgeVersion},
-			Scorecard:    rec.Scorecard,
+			SubmissionID:    rec.SubmissionID,
+			TaskID:          rec.TaskID,
+			Status:          rec.Status,
+			URL:             submissionURL("/v1/submissions", rec.SubmissionID),
+			GitHubPath:      rec.GitHubPath,
+			GitHubPRURL:     rec.GitHubPRURL,
+			GitHubCommitSHA: rec.GitHubCommit,
+			Judge:           submitJudge{Status: rec.Status, Model: serverJudgeModel(j), Version: judgeVersion},
+			Scorecard:       rec.Scorecard,
 		}
 		w.Header().Set("content-type", "application/json")
 		if r.Method == http.MethodHead {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -20,10 +21,11 @@ const (
 )
 
 type submissionWorker struct {
-	store    submissionStore
-	judge    judge.Judge
-	workerID string
-	logger   *slog.Logger
+	store     submissionStore
+	judge     judge.Judge
+	publisher corpusPublisher
+	workerID  string
+	logger    *slog.Logger
 }
 
 func (w submissionWorker) Run(ctx context.Context) {
@@ -48,6 +50,16 @@ func (w submissionWorker) Run(ctx context.Context) {
 			continue
 		}
 		if !ok {
+			if w.publisher != nil {
+				claimed, ok, err = w.store.ClaimPublishJob(ctx, w.workerID, time.Now().UTC())
+				if err != nil {
+					w.logger.Warn("claim publish job failed", "error", err)
+					resetTimer(timer, workerIdleDelay)
+					continue
+				}
+			}
+		}
+		if !ok {
 			resetTimer(timer, workerIdleDelay)
 			continue
 		}
@@ -57,37 +69,100 @@ func (w submissionWorker) Run(ctx context.Context) {
 }
 
 func (w submissionWorker) process(ctx context.Context, job judgeJobRecord) {
-	started := time.Now().UTC()
-	verdict, err := w.judge.Assess(ctx, taskJudgeTurns(job.Task), job.Task.Outcome.SkillsUsed)
-	if err != nil {
+	card := job.Scorecard
+	if card == nil {
+		started := time.Now().UTC()
+		verdict, err := w.judge.Assess(ctx, taskJudgeTurns(job.Task), job.Task.Outcome.SkillsUsed)
+		if err != nil {
+			persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
+			defer cancel()
+			if failErr := w.store.FailJudgeJob(persistCtx, job, err.Error(), time.Now().UTC(), isPermanentJudgeFailure(err)); failErr != nil {
+				w.logger.Warn("record judge failure failed", "submission_id", job.SubmissionID, "error", failErr)
+			}
+			return
+		}
+		success := judge.ScoreSuccess(verdict)
+		signals := signalsFromSubmittedTask(job.Task, success, judge.Label(verdict))
+		result := score.Score(signals)
+		card = scorecardForSubmit(result)
+		completed := time.Now().UTC()
+		run := judgeRunRecord{
+			SubmissionID:  job.SubmissionID,
+			JudgeModel:    serverJudgeModel(w.judge),
+			JudgeVersion:  judgeVersion,
+			PromptVersion: judgePromptVersion,
+			Verdict:       verdict,
+			Scorecard:     card,
+			Status:        submissionStatusJudged,
+			StartedAt:     started,
+			CompletedAt:   completed,
+		}
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
+		if err := w.store.CompleteJudgeJob(persistCtx, job, run); err != nil {
+			cancel()
+			w.logger.Warn("complete judge job failed", "submission_id", job.SubmissionID, "error", err)
+			return
+		}
+		cancel()
+	}
+
+	if w.publisher == nil {
+		return
+	}
+	if job.Scorecard == nil {
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
+		publishJob, ok, err := w.store.ClaimPublishJob(persistCtx, w.workerID, time.Now().UTC())
+		cancel()
+		if err != nil {
+			w.logger.Warn("claim publish job failed", "submission_id", job.SubmissionID, "error", err)
+			return
+		}
+		if !ok {
+			return
+		}
+		job = publishJob
+		card = publishJob.Scorecard
+	}
+	w.publish(ctx, job, card)
+}
+
+func (w submissionWorker) publish(ctx context.Context, job judgeJobRecord, card *submitScorecard) {
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
+	mapping, ok, err := w.store.GetTaskMapping(persistCtx, job.Task)
+	cancel()
+	if err != nil {
+		persistCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
 		defer cancel()
-		if failErr := w.store.FailJudgeJob(persistCtx, job, err.Error(), time.Now().UTC(), isPermanentJudgeFailure(err)); failErr != nil {
-			w.logger.Warn("record judge failure failed", "submission_id", job.SubmissionID, "error", failErr)
+		if failErr := w.store.FailPublishJob(persistCtx, job, err.Error(), time.Now().UTC(), false); failErr != nil {
+			w.logger.Warn("record mapping failure failed", "submission_id", job.SubmissionID, "error", failErr)
 		}
 		return
 	}
-	success := judge.ScoreSuccess(verdict)
-	signals := signalsFromSubmittedTask(job.Task, success, judge.Label(verdict))
-	result := score.Score(signals)
-	card := scorecardForSubmit(result)
-	completed := time.Now().UTC()
-	run := judgeRunRecord{
-		SubmissionID:  job.SubmissionID,
-		JudgeModel:    serverJudgeModel(w.judge),
-		JudgeVersion:  judgeVersion,
-		PromptVersion: judgePromptVersion,
-		Verdict:       verdict,
-		Scorecard:     card,
-		Status:        submissionStatusJudged,
-		StartedAt:     started,
-		CompletedAt:   completed,
+	if !ok {
+		var publishErr error
+		mapping, publishErr = w.publisher.Publish(ctx, job.Task, card)
+		if publishErr != nil {
+			persistCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
+			defer cancel()
+			if failErr := w.store.FailPublishJob(persistCtx, job, publishErr.Error(), time.Now().UTC(), isPermanentPublishFailure(publishErr)); failErr != nil {
+				w.logger.Warn("record publish failure failed", "submission_id", job.SubmissionID, "error", failErr)
+			}
+			return
+		}
 	}
-	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
+	persistCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
 	defer cancel()
-	if err := w.store.CompleteJudgeJob(persistCtx, job, run); err != nil {
-		w.logger.Warn("complete judge job failed", "submission_id", job.SubmissionID, "error", err)
+	if err := w.store.CompletePublishJob(persistCtx, job, mapping); err != nil {
+		w.logger.Warn("complete publish job failed", "submission_id", job.SubmissionID, "error", err)
 	}
+}
+
+func isPermanentPublishFailure(err error) bool {
+	var apiErr githubAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusBadRequest
+	}
+	return errors.Is(err, errTaskIDConflict)
 }
 
 func isPermanentJudgeFailure(err error) bool {
