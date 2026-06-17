@@ -1,0 +1,32 @@
+{
+  "name": "proofswe",
+  "version": "0.0.0-development",
+  "description": "Benchmark coding agents from real developer sessions.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Atharva-Kanherkar/proofswe.git"
+  },
+  "bin": {
+    "proofswe": "npm/bin/proofswe.js"
+  },
+  "files": [
+    "npm/bin/proofswe.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "optionalDependencies": {
+    "@proofswe/darwin-arm64": "0.0.0-development",
+    "@proofswe/darwin-x64": "0.0.0-development",
+    "@proofswe/linux-arm64": "0.0.0-development",
+    "@proofswe/linux-x64": "0.0.0-development",
+    "@proofswe/win32-arm64": "0.0.0-development",
+    "@proofswe/win32-x64": "0.0.0-development"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "smoke": "node npm/bin/proofswe.js version"
+  }
+}

@@ -9,7 +9,7 @@ import (
 	"runtime/debug"
 )
 
-var ErrUsage = errors.New("usage: proofswe <enable|disable|off|on|status|consent|show|inspect|score|contribute|resolve|hook|version|help>")
+var ErrUsage = errors.New("usage: proofswe <enable|disable|off|on|status|consent|show|inspect|score|contribute|submit|serve|resolve|hook|version|help>")
 
 type Config struct {
 	Args      []string
@@ -68,6 +68,10 @@ func Run(ctx context.Context, cfg Config) error {
 		return runScoreCommand(cfg, cfg.Args[1:])
 	case "contribute":
 		return runContributeCommand(cfg, cfg.Args[1:])
+	case "submit":
+		return runSubmitCommand(ctx, cfg, cfg.Args[1:])
+	case "serve":
+		return runServeCommand(ctx, cfg, cfg.Args[1:])
 	case "resolve":
 		return runResolveCommand(cfg, cfg.Args[1:])
 	case "version", "-v", "--version":
@@ -92,6 +96,8 @@ Usage:
   proofswe inspect <session>
   proofswe score <transcript> [--harness=claudecode|codex] [--local-judge] [--judge-mode=local|none] [--judge-provider=auto|openai|anthropic] [--judge-model=model] [--json] [--html out.html]
   proofswe contribute <transcript> [--harness=…] [--as=@handle] [--out task.json] [--print]
+  proofswe submit <transcript> [--harness=…] [--as=@handle] [--endpoint URL] [--json] [--force]
+  proofswe serve [--addr=:8080] [--judge-provider=openai|anthropic] [--judge-model=model]
   proofswe resolve [--maturity=24h]
   proofswe hook <claudecode|codex> <SessionStart|SessionEnd|Stop>
   proofswe version
