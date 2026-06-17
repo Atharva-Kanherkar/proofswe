@@ -5,8 +5,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 function packageName() {
-  const platform = process.env.PROOFSWE_TEST_PLATFORM || process.platform;
-  const arch = process.env.PROOFSWE_TEST_ARCH || process.arch;
+  const platform = currentPlatform();
+  const arch = currentArch();
   const supported = new Set([
     "darwin:arm64",
     "darwin:x64",
@@ -22,15 +22,33 @@ function packageName() {
   return `@proofswe/${platform}-${arch}`;
 }
 
+function devOverridesEnabled() {
+  return process.env.PROOFSWE_ENABLE_DEV_OVERRIDES === "1";
+}
+
+function currentPlatform() {
+  if (devOverridesEnabled() && process.env.PROOFSWE_TEST_PLATFORM) {
+    return process.env.PROOFSWE_TEST_PLATFORM;
+  }
+  return process.platform;
+}
+
+function currentArch() {
+  if (devOverridesEnabled() && process.env.PROOFSWE_TEST_ARCH) {
+    return process.env.PROOFSWE_TEST_ARCH;
+  }
+  return process.arch;
+}
+
 function binaryPath() {
-  if (process.env.PROOFSWE_BINARY_PATH) {
+  if (devOverridesEnabled() && process.env.PROOFSWE_BINARY_PATH) {
     return process.env.PROOFSWE_BINARY_PATH;
   }
 
-  const platform = process.env.PROOFSWE_TEST_PLATFORM || process.platform;
+  const platform = currentPlatform();
   const suffix = platform === "win32" ? ".exe" : "";
   const pkg = packageName();
-  if (process.env.PROOFSWE_PACKAGE_ROOT) {
+  if (devOverridesEnabled() && process.env.PROOFSWE_PACKAGE_ROOT) {
     const scoped = pkg.split("/");
     const candidate = path.join(process.env.PROOFSWE_PACKAGE_ROOT, "node_modules", scoped[0], scoped[1], "bin", `proofswe${suffix}`);
     if (fs.existsSync(candidate)) {

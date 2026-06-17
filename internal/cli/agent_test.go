@@ -25,7 +25,7 @@ func TestAgentInstallWritesCodexPromptAndSkill(t *testing.T) {
 
 	prompt := mustReadString(t, filepath.Join(codexHome, "prompts", "benchmark.md"))
 	skill := mustReadString(t, filepath.Join(codexHome, "skills", "proofswe-benchmark", "SKILL.md"))
-	claudeSkill := mustReadString(t, filepath.Join(claudeHome, "skills", "benchmark", "SKILL.md"))
+	claudeSkill := mustReadString(t, filepath.Join(claudeHome, "skills", "proofswe-benchmark", "SKILL.md"))
 	for _, got := range []string{prompt, skill, claudeSkill} {
 		if !strings.Contains(got, "proofswe submit") {
 			t.Fatalf("installed asset missing submit command:\n%s", got)
@@ -37,8 +37,11 @@ func TestAgentInstallWritesCodexPromptAndSkill(t *testing.T) {
 	if !strings.Contains(stdout.String(), "/prompts:benchmark") || !strings.Contains(stdout.String(), "$proofswe-benchmark") {
 		t.Fatalf("stdout = %s", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "/benchmark") || !strings.Contains(claudeSkill, "name: benchmark") {
-		t.Fatalf("Claude skill not installed as /benchmark:\nstdout=%s\nskill=%s", stdout.String(), claudeSkill)
+	if !strings.Contains(stdout.String(), "$proofswe-benchmark") || !strings.Contains(claudeSkill, "name: proofswe-benchmark") {
+		t.Fatalf("Claude skill not installed as proofswe-benchmark:\nstdout=%s\nskill=%s", stdout.String(), claudeSkill)
+	}
+	if _, err := os.Stat(filepath.Join(claudeHome, "skills", "benchmark", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("generic Claude benchmark skill should not be written; stat err = %v", err)
 	}
 }
 

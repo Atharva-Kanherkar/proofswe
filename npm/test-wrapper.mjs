@@ -26,6 +26,7 @@ for (const [platform, arch] of platforms) {
     encoding: "utf8",
     env: {
       ...process.env,
+      PROOFSWE_ENABLE_DEV_OVERRIDES: "1",
       PROOFSWE_PACKAGE_ROOT: root,
       PROOFSWE_TEST_PLATFORM: platform,
       PROOFSWE_TEST_ARCH: arch,

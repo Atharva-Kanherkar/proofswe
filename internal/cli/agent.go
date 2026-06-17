@@ -41,7 +41,7 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 	}
 	codexPromptPath := filepath.Join(codexHome, "prompts", "benchmark.md")
 	codexSkillPath := filepath.Join(codexHome, "skills", "proofswe-benchmark", "SKILL.md")
-	claudeSkillPath := filepath.Join(claudeHome, "skills", "benchmark", "SKILL.md")
+	claudeSkillPath := filepath.Join(claudeHome, "skills", "proofswe-benchmark", "SKILL.md")
 	if err := writeAgentAsset(codexPromptPath, codexBenchmarkPrompt); err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 	_, _ = fmt.Fprintf(cfg.Stdout, "installed Codex prompt:     %s\n", codexPromptPath)
 	_, _ = fmt.Fprintf(cfg.Stdout, "installed Codex skill:      %s\n", codexSkillPath)
 	_, _ = fmt.Fprintf(cfg.Stdout, "installed Claude Code skill: %s\n", claudeSkillPath)
-	_, _ = fmt.Fprintln(cfg.Stdout, "\nUse /prompts:benchmark or mention $proofswe-benchmark inside Codex; use /benchmark inside Claude Code.")
+	_, _ = fmt.Fprintln(cfg.Stdout, "\nUse /prompts:benchmark or mention $proofswe-benchmark inside Codex; mention $proofswe-benchmark inside Claude Code.")
 	return nil
 }
 
@@ -97,8 +97,8 @@ Run the benchmark from the current repository without asking the user to leave t
 `
 
 const claudeBenchmarkSkill = `---
-name: benchmark
-description: Run proofswe benchmarking/submission from inside Claude Code. Use when the user asks to benchmark the current Claude Code session, donate the transcript, submit to proofswe, get an official scorecard, run /benchmark, or avoid leaving Claude Code to run the CLI.
+name: proofswe-benchmark
+description: Run proofswe benchmarking/submission from inside Claude Code. Use when the user asks to benchmark the current Claude Code session, donate the transcript, submit to proofswe, get an official scorecard, run proofswe benchmark, or avoid leaving Claude Code to run the CLI.
 ---
 
 # Proofswe Benchmark

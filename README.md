@@ -88,19 +88,18 @@ Submit a real Codex or Claude Code transcript for server-side judging:
 proofswe submit
 ```
 
-`submit` auto-detects the latest supported Codex or Claude Code transcript,
-builds the same scrubbed reproducible task as `contribute`, sends it to the
-proofswe API, and prints the server scorecard. The contributor does not need an
-OpenAI or Anthropic key; the official judge runs on the proofswe server. Use
-`proofswe submit <path>` for an explicit transcript, `--no-wait` for automation,
-and `PROOFSWE_API_URL` or `--endpoint` to point at a staging server.
+`submit` auto-detects the latest supported Codex or Claude Code transcript for
+the current git repo, builds the same scrubbed reproducible task as
+`contribute`, sends it to the proofswe API, and prints the server scorecard. The
+contributor does not need an OpenAI or Anthropic key; the official judge runs on
+the proofswe server. Use `proofswe submit <path>` for an explicit transcript,
+`--no-wait` for automation, and `PROOFSWE_API_URL` or `--endpoint` to point at a
+staging server.
 
-The npm package also installs agent chat helpers automatically:
+Agent chat helpers are explicit opt-in:
 
 - Codex: `/prompts:benchmark` plus `$proofswe-benchmark`
-- Claude Code: `/benchmark`
-
-If npm lifecycle scripts were disabled, install them manually:
+- Claude Code: `$proofswe-benchmark`
 
 ```sh
 proofswe agent install

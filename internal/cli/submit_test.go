@@ -81,28 +81,34 @@ func TestSubmitCommand_PostsTaskAndPrintsScorecard(t *testing.T) {
 
 func TestSubmitCommand_NoPathAutoDetectsLatestTranscript(t *testing.T) {
 	repo, transcript := reproducibleSubmitFixture(t)
+	otherRepo := t.TempDir()
+	initRepo(t, otherRepo)
 	home := t.TempDir()
-	older := filepath.Join(home, ".claude", "projects", "-tmp-old", "old.jsonl")
-	newer := filepath.Join(home, ".claude", "projects", "-tmp-repo", "new.jsonl")
-	if err := os.MkdirAll(filepath.Dir(older), 0o755); err != nil {
-		t.Fatalf("mkdir older: %v", err)
+	current := filepath.Join(home, ".claude", "projects", "-tmp-current", "current.jsonl")
+	other := filepath.Join(home, ".claude", "projects", "-tmp-other", "other.jsonl")
+	subagent := filepath.Join(home, ".claude", "projects", "-tmp-current", "session-a", "subagents", "subagent.jsonl")
+	for _, path := range []string{current, other, subagent} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
 	}
-	if err := os.MkdirAll(filepath.Dir(newer), 0o755); err != nil {
-		t.Fatalf("mkdir newer: %v", err)
-	}
-	mustWrite(t, older, `{"type":"user","uuid":"old","sessionId":"old","timestamp":"2026-06-01T00:00:00Z","message":{"role":"user","content":"older"}}`+"\n")
 	data, err := os.ReadFile(transcript)
 	if err != nil {
 		t.Fatalf("read transcript: %v", err)
 	}
-	mustWrite(t, newer, string(data))
-	oldTime := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	newTime := oldTime.Add(time.Hour)
-	if err := os.Chtimes(older, oldTime, oldTime); err != nil {
-		t.Fatalf("chtimes older: %v", err)
-	}
-	if err := os.Chtimes(newer, newTime, newTime); err != nil {
-		t.Fatalf("chtimes newer: %v", err)
+	currentData := strings.ReplaceAll(string(data), `"timestamp":`, `"cwd":`+strconvQuote(repo)+`,"timestamp":`)
+	mustWrite(t, current, currentData)
+	mustWrite(t, other, `{"type":"user","uuid":"other","sessionId":"other","cwd":`+strconvQuote(otherRepo)+`,"timestamp":"2026-06-01T00:00:00Z","message":{"role":"user","content":"other repo"}}`+"\n")
+	mustWrite(t, subagent, `{"type":"user","uuid":"sub","sessionId":"sub","cwd":`+strconvQuote(repo)+`,"timestamp":"2026-06-01T00:00:00Z","message":{"role":"user","content":"subagent prompt"}}`+"\n")
+	baseTime := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	for path, modTime := range map[string]time.Time{
+		current:  baseTime,
+		other:    baseTime.Add(time.Hour),
+		subagent: baseTime.Add(2 * time.Hour),
+	} {
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			t.Fatalf("chtimes %s: %v", path, err)
+		}
 	}
 
 	var sawTask corpus.Task

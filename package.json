@@ -12,7 +12,6 @@
   },
   "files": [
     "npm/bin/proofswe.js",
-    "npm/postinstall.js",
     "README.md",
     "LICENSE"
   ],
@@ -28,8 +27,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "postinstall": "node npm/postinstall.js",
     "smoke": "node npm/bin/proofswe.js version",
-    "test": "node npm/test-wrapper.mjs && node npm/test-postinstall.mjs"
+    "test": "node npm/test-wrapper.mjs"
   }
 }
