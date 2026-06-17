@@ -2,6 +2,10 @@
 // transcript by reading how the DEVELOPER reacted to the assistant's work across
 // the turns — not by re-evaluating the assistant's output (that is what the
 // merged/committed/tests axes are for, and judging output directly is bias-prone).
+// The prompt treats software engineering as broader than implementation:
+// product discovery, requirements clarification, design tradeoffs, testing, CI,
+// deployment, release, and operational follow-through are all normal parts of
+// real SWE sessions.
 //
 // The whole mechanism is one blinded LLM call per transcript that returns a small
 // Verdict, which maps to a 0–100 success score. "Blinded" = the model's identity
@@ -58,10 +62,20 @@ const maxTurnChars = 1500
 
 const instruction = `You are reading a coding session between a developer and an AI assistant (identity hidden).
 Judge how the developer reacted to the assistant's work across ALL the turns — not whether the code looks correct, and NOT just the final message.
+
+Important context: real software engineering is broader than writing code. A useful SWE session may include product direction, requirement discovery, design tradeoffs, architecture, implementation, tests, code review, CI failures, deployment, release, documentation, security/privacy constraints, and operational follow-through. Developers often supervise coding agents by steering scope, adding requirements, clarifying business intent, asking for research, providing credentials, reporting CI/deployment facts, or asking the agent to continue. Those interactions are part of the task, not automatically evidence that the assistant failed.
+
+Your job is to judge developer acceptance and assistant-caused burden. Separate these categories before deciding:
+  - normal task evolution: new product direction, added requirements, environment/deployment constraints, CI status updates, background-task notifications, credential handoff, "continue", or choosing among options. Do NOT count these as corrections unless they clearly reverse or repair wrong assistant work.
+  - assistant-caused correction: the developer says the assistant misunderstood, made a bug, broke CI, used the wrong approach/domain, ignored an instruction, produced an unacceptable design, or had to be explicitly redirected away from a mistake. Count these.
+  - acceptance/approval: the developer merges, asks to release, confirms behavior, or builds on the result. These are positive signals even if the session was long.
+  - abandonment: the developer gives up, asks another agent/human to take over, or leaves the work unresolved.
+
+For exploratory product engineering, deployment, release, and PR-repair sessions, expect multi-turn collaboration. Penalize repeated assistant mistakes and unnecessary churn, but do not punish the assistant simply because the developer refined the product or because real CI/deployment constraints appeared late.
 Reply with ONLY this JSON: {"outcome":"accepted|corrected|abandoned","corrections":<int>,"sentiment":<number between -1 and 1>}
-  outcome     = the session's overall arc: accepted (approved / used it) · corrected (worked only after the developer pushed back) · abandoned (gave up / left unresolved)
-  corrections = COUNT every push-back: a re-direction, a bug report, "no" / "that's wrong" / "not what I asked", or an interruption such as "[Request interrupted by user]". Each one counts.
-  sentiment   = the developer's frustration↔satisfaction over the WHOLE session, -1 (furious) to 1 (delighted). Profanity, insults, ALL-CAPS, sarcasm and exasperation ("wtf", "are you serious", "I already told you") are STRONG frustration — weight them heavily even if the session ends with a polite "thanks". Do NOT anchor on the final turn.`
+  outcome     = accepted if the developer approved, merged, released, confirmed, or used the result overall; corrected if the final result worked only after material assistant-caused corrections; abandoned if the work was left unresolved.
+  corrections = count assistant-caused corrections only. Do not count normal task evolution, added scope, credentials, CI/deployment facts, background notifications, "continue", or choosing options unless they fix a specific assistant mistake.
+  sentiment   = the developer's frustration↔satisfaction over the WHOLE session, -1 (furious) to 1 (delighted). Keep this separate from outcome: a shipped or merged session can still have negative sentiment if the path was painful, and an unshipped session can still be calm. Profanity, insults, ALL-CAPS, sarcasm and exasperation ("wtf", "are you serious", "I already told you") are frustration signals. Do NOT anchor on the final turn.`
 
 // BuildPrompt renders the blinded judging prompt. The model id never appears; the
 // assistant is labeled generically.

@@ -27,6 +27,80 @@ func TestBuildPrompt_BlindAndIncludesTurns(t *testing.T) {
 	}
 }
 
+func TestBuildPrompt_ExplainsRealSWERubric(t *testing.T) {
+	p := BuildPrompt([]Turn{
+		{Role: "user", Text: "research enterprise tasks, build the E2B template, make it multi-turn, fix CI, and push"},
+		{Role: "assistant", Text: "implemented the template, tests pass, PR is updated"},
+		{Role: "user", Text: "merged; now release it"},
+	}, nil)
+
+	for _, want := range []string{
+		"real software engineering is broader than writing code",
+		"product direction",
+		"requirement discovery",
+		"CI failures",
+		"deployment",
+		"release",
+		"normal task evolution",
+		"Do NOT count these as corrections",
+		"assistant-caused correction",
+		"merged",
+	} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("prompt missing SWE rubric fragment %q:\n%s", want, p)
+		}
+	}
+}
+
+func TestBuildPrompt_IncludesProductSteeringRules(t *testing.T) {
+	p := BuildPrompt([]Turn{
+		{Role: "user", Text: "why do i need an E2B template id? use my E2B keys and execute tasks in sandboxes"},
+		{Role: "assistant", Text: "explained the distinction between account credentials and sandbox templates"},
+		{Role: "user", Text: "remove hermes for now; this is for enterprises, add an ROI form, show traces"},
+		{Role: "user", Text: "ci is failing"},
+		{Role: "assistant", Text: "inspected the failing check, fixed it, pushed the branch"},
+	}, []string{"proofswe-benchmark"})
+
+	if strings.Contains(strings.ToLower(p), "claude") || strings.Contains(strings.ToLower(p), "gpt") {
+		t.Errorf("prompt leaks model identity:\n%s", p)
+	}
+	for _, want := range []string{
+		"new product direction",
+		"added requirements",
+		"environment/deployment constraints",
+		"CI status updates",
+		"credential handoff",
+		"real CI/deployment constraints appeared late",
+		"proofswe-benchmark",
+	} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("prompt missing product-steering rule %q:\n%s", want, p)
+		}
+	}
+}
+
+func TestBuildPrompt_DoesNotTreatSubmitAsAcceptanceOrSoftenPainfulShipping(t *testing.T) {
+	p := BuildPrompt([]Turn{
+		{Role: "user", Text: "submit this transcript to proofswe"},
+		{Role: "assistant", Text: "submitted"},
+	}, nil)
+
+	for _, bad := range []string{"push/submit", "submitted, or used", "calibrate them against whether the work ultimately shipped"} {
+		if strings.Contains(p, bad) {
+			t.Fatalf("prompt still contains deprecated rubric fragment %q:\n%s", bad, p)
+		}
+	}
+	for _, want := range []string{
+		"confirmed, or used",
+		"Keep this separate from outcome",
+		"a shipped or merged session can still have negative sentiment",
+	} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("prompt missing sentiment/outcome separation %q:\n%s", want, p)
+		}
+	}
+}
+
 func TestParseVerdict(t *testing.T) {
 	cases := []struct {
 		name    string
