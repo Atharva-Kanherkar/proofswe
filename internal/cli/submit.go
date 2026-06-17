@@ -116,7 +116,7 @@ func runSubmitCommand(ctx context.Context, cfg Config, args []string) error {
 	if err != nil {
 		return err
 	}
-	if wait && resp.Scorecard == nil && resp.SubmissionID != "" && isPendingSubmissionStatus(resp.Status) {
+	if wait && resp.SubmissionID != "" && isPendingSubmissionStatus(resp.Status) && (resp.Scorecard == nil || isPendingPublishStatus(resp.Status)) {
 		if polled, err := pollSubmission(ctx, endpoint, token, resp, waitTimeout, pollInterval); err == nil {
 			resp = polled
 		} else if !asJSON {
@@ -203,7 +203,10 @@ func pollSubmission(ctx context.Context, endpoint, token string, initial submitR
 	defer ticker.Stop()
 	current := initial
 	for {
-		if current.Scorecard != nil || isTerminalSubmissionStatus(current.Status) {
+		if isTerminalSubmissionStatus(current.Status) {
+			return current, nil
+		}
+		if current.Scorecard != nil && !isPendingPublishStatus(current.Status) {
 			return current, nil
 		}
 		select {
@@ -246,7 +249,7 @@ func getSubmission(ctx context.Context, url, token string) (submitResponse, erro
 
 func isPendingSubmissionStatus(status string) bool {
 	switch status {
-	case "", submissionStatusQueued, submissionStatusJudging:
+	case "", submissionStatusQueued, submissionStatusJudging, submissionStatusPublish:
 		return true
 	default:
 		return false
@@ -255,11 +258,15 @@ func isPendingSubmissionStatus(status string) bool {
 
 func isTerminalSubmissionStatus(status string) bool {
 	switch status {
-	case submissionStatusJudged, "publishing", "published", submissionStatusFailed:
+	case submissionStatusPubDone, submissionStatusFailed:
 		return true
 	default:
 		return false
 	}
+}
+
+func isPendingPublishStatus(status string) bool {
+	return status == submissionStatusPublish
 }
 
 func printSubmitText(w io.Writer, r submitResponse) {

@@ -50,6 +50,16 @@ func (w submissionWorker) Run(ctx context.Context) {
 			continue
 		}
 		if !ok {
+			if w.publisher != nil {
+				claimed, ok, err = w.store.ClaimPublishJob(ctx, w.workerID, time.Now().UTC())
+				if err != nil {
+					w.logger.Warn("claim publish job failed", "error", err)
+					resetTimer(timer, workerIdleDelay)
+					continue
+				}
+			}
+		}
+		if !ok {
 			resetTimer(timer, workerIdleDelay)
 			continue
 		}
@@ -99,12 +109,26 @@ func (w submissionWorker) process(ctx context.Context, job judgeJobRecord) {
 	if w.publisher == nil {
 		return
 	}
+	if job.Scorecard == nil {
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
+		publishJob, ok, err := w.store.ClaimPublishJob(persistCtx, w.workerID, time.Now().UTC())
+		cancel()
+		if err != nil {
+			w.logger.Warn("claim publish job failed", "submission_id", job.SubmissionID, "error", err)
+			return
+		}
+		if !ok {
+			return
+		}
+		job = publishJob
+		card = publishJob.Scorecard
+	}
 	w.publish(ctx, job, card)
 }
 
 func (w submissionWorker) publish(ctx context.Context, job judgeJobRecord, card *submitScorecard) {
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
-	mapping, ok, err := w.store.GetTaskMapping(persistCtx, job.Task.TaskID)
+	mapping, ok, err := w.store.GetTaskMapping(persistCtx, job.Task)
 	cancel()
 	if err != nil {
 		persistCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
@@ -136,9 +160,9 @@ func (w submissionWorker) publish(ctx context.Context, job judgeJobRecord, card 
 func isPermanentPublishFailure(err error) bool {
 	var apiErr githubAPIError
 	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden || apiErr.StatusCode == http.StatusBadRequest
+		return apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusBadRequest
 	}
-	return false
+	return errors.Is(err, errTaskIDConflict)
 }
 
 func isPermanentJudgeFailure(err error) bool {

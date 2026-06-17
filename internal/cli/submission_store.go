@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -38,15 +39,19 @@ type submissionStore interface {
 	CreateSubmission(context.Context, submitRequest) (submissionRecord, error)
 	GetSubmission(context.Context, string) (submissionRecord, bool, error)
 	ClaimJudgeJob(context.Context, string, time.Time) (judgeJobRecord, bool, error)
+	ClaimPublishJob(context.Context, string, time.Time) (judgeJobRecord, bool, error)
 	CompleteJudgeJob(context.Context, judgeJobRecord, judgeRunRecord) error
-	GetTaskMapping(context.Context, string) (corpusMapping, bool, error)
+	GetTaskMapping(context.Context, corpus.Task) (corpusMapping, bool, error)
 	CompletePublishJob(context.Context, judgeJobRecord, corpusMapping) error
 	FailPublishJob(context.Context, judgeJobRecord, string, time.Time, bool) error
 	FailJudgeJob(context.Context, judgeJobRecord, string, time.Time, bool) error
 	Close() error
 }
 
-var errPermanentJudgeFailure = errors.New("permanent judge failure")
+var (
+	errPermanentJudgeFailure = errors.New("permanent judge failure")
+	errTaskIDConflict        = errors.New("task_id conflicts with stored corpus task")
+)
 
 type submissionRecord struct {
 	SubmissionID  string
@@ -92,10 +97,22 @@ func validateSubmittedTask(task corpus.Task) error {
 	if task.TaskID == "" {
 		return fmt.Errorf("missing task_id")
 	}
+	if want := corpusTaskID(task); task.TaskID != want {
+		return fmt.Errorf("task_id mismatch: got %s, want %s", task.TaskID, want)
+	}
 	if problems := corpus.ReproducibilityProblems(task); len(problems) > 0 {
 		return fmt.Errorf("not a reproducible corpus task: %v", problems)
 	}
 	return nil
+}
+
+func corpusTaskID(task corpus.Task) string {
+	starting := ""
+	if len(task.Prompts) > 0 {
+		starting = task.Prompts[0].Text
+	}
+	sum := sha256.Sum256([]byte(task.Repo.RemoteURL + "\x00" + task.Repo.BaseCommit + "\x00" + starting))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func payloadSHA256(req submitRequest) (string, error) {
@@ -201,10 +218,14 @@ func (s *memorySubmissionStore) GetSubmission(_ context.Context, submissionID st
 	return rec, ok, nil
 }
 
-func (s *memorySubmissionStore) GetTaskMapping(_ context.Context, taskID string) (corpusMapping, bool, error) {
+func (s *memorySubmissionStore) GetTaskMapping(_ context.Context, task corpus.Task) (corpusMapping, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	mapping, ok := s.mappings[taskID]
+	stored, ok := s.tasks[task.TaskID]
+	if ok && !sameCorpusTask(stored, task) {
+		return corpusMapping{}, false, errTaskIDConflict
+	}
+	mapping, ok := s.mappings[task.TaskID]
 	return mapping, ok, nil
 }
 
@@ -212,7 +233,8 @@ func (s *memorySubmissionStore) ClaimJudgeJob(_ context.Context, workerID string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, job := range s.jobs {
-		if job.status == judgeJobStatusJudging && !job.lockedAt.IsZero() && now.Sub(job.lockedAt) >= judgeVisibilityTimeout {
+		rec := s.submissions[job.record.SubmissionID]
+		if job.status == judgeJobStatusJudging && rec.Scorecard == nil && !job.lockedAt.IsZero() && now.Sub(job.lockedAt) >= judgeVisibilityTimeout {
 			job.status = judgeJobStatusQueued
 			job.lockedAt = time.Time{}
 			job.lockedBy = ""
@@ -225,7 +247,6 @@ func (s *memorySubmissionStore) ClaimJudgeJob(_ context.Context, workerID string
 		}
 		job.status = judgeJobStatusJudging
 		job.record.Attempts++
-		rec := s.submissions[job.record.SubmissionID]
 		job.record.Scorecard = rec.Scorecard
 		job.lockedAt = now
 		job.lockedBy = workerID
@@ -243,12 +264,48 @@ func (s *memorySubmissionStore) ClaimJudgeJob(_ context.Context, workerID string
 	return judgeJobRecord{}, false, nil
 }
 
+func (s *memorySubmissionStore) ClaimPublishJob(_ context.Context, workerID string, now time.Time) (judgeJobRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, job := range s.jobs {
+		rec := s.submissions[job.record.SubmissionID]
+		if job.status == judgeJobStatusJudging && rec.Scorecard != nil && !job.lockedAt.IsZero() && now.Sub(job.lockedAt) >= judgeVisibilityTimeout {
+			job.status = judgeJobStatusJudged
+			job.lockedAt = time.Time{}
+			job.lockedBy = ""
+			job.runAfter = now
+			job.updatedAt = now
+		}
+		if job.status != judgeJobStatusJudged || job.runAfter.After(now) {
+			s.jobs[id] = job
+			continue
+		}
+		if rec.Scorecard == nil {
+			s.jobs[id] = job
+			continue
+		}
+		job.status = judgeJobStatusJudging
+		job.record.Attempts++
+		job.record.Scorecard = rec.Scorecard
+		job.lockedAt = now
+		job.lockedBy = workerID
+		job.updatedAt = now
+		s.jobs[id] = job
+		rec.Status = submissionStatusPublish
+		rec.UpdatedAt = now
+		s.submissions[rec.SubmissionID] = rec
+		return job.record, true, nil
+	}
+	return judgeJobRecord{}, false, nil
+}
+
 func (s *memorySubmissionStore) CompleteJudgeJob(_ context.Context, job judgeJobRecord, run judgeRunRecord) error {
 	now := time.Now().UTC()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	stored := s.jobs[job.ID]
 	stored.status = judgeJobStatusJudged
+	stored.record.Attempts = 0
 	stored.updatedAt = now
 	s.jobs[job.ID] = stored
 	rec := s.submissions[job.SubmissionID]
@@ -292,7 +349,7 @@ func (s *memorySubmissionStore) FailPublishJob(_ context.Context, job judgeJobRe
 		rec.Status = submissionStatusFailed
 		rec.ErrorCode = "publish_failed"
 	} else {
-		stored.status = judgeJobStatusQueued
+		stored.status = judgeJobStatusJudged
 		stored.lockedAt = time.Time{}
 		stored.lockedBy = ""
 		stored.runAfter = now.Add(time.Duration(job.Attempts) * judgeRetryBackoff)
@@ -343,4 +400,8 @@ func (s *memorySubmissionStore) judgeRunCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.runs)
+}
+
+func sameCorpusTask(a, b corpus.Task) bool {
+	return reflect.DeepEqual(a, b)
 }

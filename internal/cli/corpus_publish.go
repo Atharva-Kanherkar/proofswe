@@ -32,10 +32,11 @@ type corpusPublisher interface {
 }
 
 type githubCorpusPublisher struct {
-	client  submitDoer
-	token   string
-	repo    string
-	baseURL string
+	client     submitDoer
+	token      string
+	repo       string
+	baseURL    string
+	baseBranch string
 }
 
 func newConfiguredCorpusPublisher(cfg Config) corpusPublisher {
@@ -48,10 +49,11 @@ func newConfiguredCorpusPublisher(cfg Config) corpusPublisher {
 	}
 	repo := firstNonEmpty(strings.TrimSpace(getenvOrEmpty(cfg, "PROOFSWE_CORPUS_REPO")), defaultCorpusRepo)
 	return githubCorpusPublisher{
-		client:  &http.Client{Timeout: 30 * time.Second},
-		token:   token,
-		repo:    repo,
-		baseURL: githubAPIBaseURL,
+		client:     &http.Client{Timeout: 30 * time.Second},
+		token:      token,
+		repo:       repo,
+		baseURL:    githubAPIBaseURL,
+		baseBranch: strings.TrimSpace(getenvOrEmpty(cfg, "PROOFSWE_CORPUS_BASE_BRANCH")),
 	}
 }
 
@@ -102,18 +104,38 @@ func taskWithOfficialScorecard(task corpus.Task, card *submitScorecard) corpus.T
 }
 
 func (p githubCorpusPublisher) defaultBranchSHA(ctx context.Context) (string, error) {
+	baseBranch, err := p.branchBase(ctx)
+	if err != nil {
+		return "", err
+	}
 	var out struct {
 		Object struct {
 			SHA string `json:"sha"`
 		} `json:"object"`
 	}
-	if err := p.githubJSON(ctx, http.MethodGet, "/repos/"+p.repo+"/git/ref/heads/main", nil, &out); err != nil {
+	if err := p.githubJSON(ctx, http.MethodGet, "/repos/"+p.repo+"/git/ref/heads/"+url.PathEscape(baseBranch), nil, &out); err != nil {
 		return "", err
 	}
 	if out.Object.SHA == "" {
-		return "", fmt.Errorf("github: empty main ref sha")
+		return "", fmt.Errorf("github: empty %s ref sha", baseBranch)
 	}
 	return out.Object.SHA, nil
+}
+
+func (p githubCorpusPublisher) branchBase(ctx context.Context) (string, error) {
+	if p.baseBranch != "" {
+		return p.baseBranch, nil
+	}
+	var out struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := p.githubJSON(ctx, http.MethodGet, "/repos/"+p.repo, nil, &out); err != nil {
+		return "", err
+	}
+	if out.DefaultBranch == "" {
+		return "", fmt.Errorf("github: empty default branch")
+	}
+	return out.DefaultBranch, nil
 }
 
 func (p githubCorpusPublisher) ensureBranch(ctx context.Context, branch, sha string) error {
@@ -163,11 +185,15 @@ func (p githubCorpusPublisher) contentSHA(ctx context.Context, branch, path stri
 }
 
 func (p githubCorpusPublisher) ensurePullRequest(ctx context.Context, branch, title string) (string, error) {
-	body := map[string]string{"title": title, "head": branch, "base": "main"}
+	baseBranch, err := p.branchBase(ctx)
+	if err != nil {
+		return "", err
+	}
+	body := map[string]string{"title": title, "head": branch, "base": baseBranch}
 	var out struct {
 		HTMLURL string `json:"html_url"`
 	}
-	err := p.githubJSON(ctx, http.MethodPost, "/repos/"+p.repo+"/pulls", body, &out)
+	err = p.githubJSON(ctx, http.MethodPost, "/repos/"+p.repo+"/pulls", body, &out)
 	if err == nil {
 		return out.HTMLURL, nil
 	}

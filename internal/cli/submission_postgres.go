@@ -200,7 +200,14 @@ func (s *postgresSubmissionStore) ClaimJudgeJob(ctx context.Context, workerID st
 WITH stale AS (
 	UPDATE judge_jobs
 	SET status = $1, run_after = $2, locked_at = NULL, locked_by = NULL, updated_at = $2
-	WHERE status = $3 AND locked_at IS NOT NULL AND locked_at <= $4
+	WHERE status = $3
+	  AND locked_at IS NOT NULL
+	  AND locked_at <= $4
+	  AND EXISTS (
+		SELECT 1 FROM submissions s
+		WHERE s.submission_id = judge_jobs.submission_id
+		  AND s.scorecard_json IS NULL
+	  )
 	RETURNING submission_id
 )
 UPDATE submissions
@@ -265,18 +272,102 @@ UPDATE submissions SET status = $1, updated_at = $2 WHERE submission_id = $3
 	return job, true, nil
 }
 
-func (s *postgresSubmissionStore) GetTaskMapping(ctx context.Context, taskID string) (corpusMapping, bool, error) {
+func (s *postgresSubmissionStore) ClaimPublishJob(ctx context.Context, workerID string, now time.Time) (judgeJobRecord, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return judgeJobRecord{}, false, err
+	}
+	defer rollbackAfterDone(tx)
+
+	if _, err := tx.ExecContext(ctx, `
+WITH stale AS (
+	UPDATE judge_jobs
+	SET status = $1, run_after = $2, locked_at = NULL, locked_by = NULL, updated_at = $2
+	WHERE status = $3
+	  AND locked_at IS NOT NULL
+	  AND locked_at <= $4
+	  AND EXISTS (
+		SELECT 1 FROM submissions s
+		WHERE s.submission_id = judge_jobs.submission_id
+		  AND s.scorecard_json IS NOT NULL
+	  )
+	RETURNING submission_id
+)
+UPDATE submissions
+SET status = $5, updated_at = $2
+WHERE submission_id IN (SELECT submission_id FROM stale)
+`, judgeJobStatusJudged, now, judgeJobStatusJudging, now.Add(-judgeVisibilityTimeout), submissionStatusJudged); err != nil {
+		return judgeJobRecord{}, false, err
+	}
+
+	var job judgeJobRecord
+	var rawTask []byte
+	var scorecardJSON string
+	err = tx.QueryRowContext(ctx, `
+WITH next_job AS (
+	SELECT j.id
+	FROM judge_jobs j
+	JOIN submissions s ON s.submission_id = j.submission_id
+	WHERE j.status = $1 AND j.run_after <= $2 AND s.scorecard_json IS NOT NULL
+	ORDER BY j.run_after, j.id
+	FOR UPDATE OF j SKIP LOCKED
+	LIMIT 1
+), claimed AS (
+	UPDATE judge_jobs
+	SET status = $3, attempts = attempts + 1, locked_at = $2, locked_by = $4, updated_at = $2
+	WHERE id = (SELECT id FROM next_job)
+	RETURNING id, submission_id, attempts, task_json
+)
+SELECT claimed.id, claimed.submission_id, claimed.attempts, claimed.task_json, s.scorecard_json::text
+FROM claimed
+JOIN submissions s ON s.submission_id = claimed.submission_id
+`, judgeJobStatusJudged, now, judgeJobStatusJudging, workerID).Scan(&job.ID, &job.SubmissionID, &job.Attempts, &rawTask, &scorecardJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return judgeJobRecord{}, false, nil
+	}
+	if err != nil {
+		return judgeJobRecord{}, false, err
+	}
+	job.Task, err = scanTask(rawTask)
+	if err != nil {
+		return judgeJobRecord{}, false, fmt.Errorf("decode publish task: %w", err)
+	}
+	var card submitScorecard
+	if err := json.Unmarshal([]byte(scorecardJSON), &card); err != nil {
+		return judgeJobRecord{}, false, fmt.Errorf("decode publish scorecard: %w", err)
+	}
+	job.Scorecard = &card
+	if _, err := tx.ExecContext(ctx, `
+UPDATE submissions SET status = $1, updated_at = $2 WHERE submission_id = $3
+`, submissionStatusPublish, now, job.SubmissionID); err != nil {
+		return judgeJobRecord{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return judgeJobRecord{}, false, err
+	}
+	return job, true, nil
+}
+
+func (s *postgresSubmissionStore) GetTaskMapping(ctx context.Context, task corpus.Task) (corpusMapping, bool, error) {
 	var mapping corpusMapping
+	var rawTask []byte
 	err := s.db.QueryRowContext(ctx, `
-SELECT COALESCE(github_path, ''), COALESCE(github_pr_url, ''), COALESCE(github_commit_sha, '')
+SELECT task_json, COALESCE(github_path, ''), COALESCE(github_pr_url, ''), COALESCE(github_commit_sha, '')
 FROM tasks
 WHERE task_id = $1
-`, taskID).Scan(&mapping.Path, &mapping.PRURL, &mapping.CommitSHA)
+`, task.TaskID).Scan(&rawTask, &mapping.Path, &mapping.PRURL, &mapping.CommitSHA)
 	if errors.Is(err, sql.ErrNoRows) {
 		return corpusMapping{}, false, nil
 	}
 	if err != nil {
 		return corpusMapping{}, false, err
+	}
+	stored, err := scanTask(rawTask)
+	if err != nil {
+		return corpusMapping{}, false, err
+	}
+	if !sameCorpusTask(stored, task) {
+		return corpusMapping{}, false, errTaskIDConflict
 	}
 	if mapping.Path == "" && mapping.PRURL == "" && mapping.CommitSHA == "" {
 		return corpusMapping{}, false, nil
@@ -313,7 +404,7 @@ WHERE submission_id = $4
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE judge_jobs
-SET status = $1, updated_at = $2, locked_at = NULL, locked_by = NULL
+SET status = $1, attempts = 0, updated_at = $2, locked_at = NULL, locked_by = NULL
 WHERE id = $3
 `, judgeJobStatusJudged, run.CompletedAt, job.ID); err != nil {
 		return err
@@ -379,7 +470,7 @@ WHERE submission_id = $4
 UPDATE judge_jobs
 SET status = $1, run_after = $2, last_error = $3, updated_at = $4, locked_at = NULL, locked_by = NULL
 WHERE id = $5
-`, judgeJobStatusQueued, now.Add(time.Duration(job.Attempts)*judgeRetryBackoff), errMessage, now, job.ID); err != nil {
+`, judgeJobStatusJudged, now.Add(time.Duration(job.Attempts)*judgeRetryBackoff), errMessage, now, job.ID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
