@@ -78,6 +78,41 @@ func TestSubmissionHandler_Health(t *testing.T) {
 	}
 }
 
+func TestSubmissionHandler_RequiresTokenWhenConfigured(t *testing.T) {
+	prev := newServerJudge
+	newServerJudge = func(Config, judgeOptions) (judge.Judge, error) {
+		return judge.FakeJudge{V: judge.Verdict{Outcome: judge.OutcomeAccepted}}, nil
+	}
+	t.Cleanup(func() { newServerJudge = prev })
+
+	handler, err := newSubmissionHandler(Config{Getenv: func(k string) string {
+		if k == "PROOFSWE_API_TOKEN" {
+			return "server-token"
+		}
+		return ""
+	}}, judgeOptions{})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	body, _ := json.Marshal(submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	req := httptest.NewRequest(http.MethodPost, "/v1/submissions", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want 401", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/submissions", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer server-token")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("authenticated status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func reproducibleCaptureForServe() core.Task {
 	return core.Task{
 		Harness: "codex",
