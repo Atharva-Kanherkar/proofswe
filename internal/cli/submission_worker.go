@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/judge"
@@ -14,6 +16,7 @@ const (
 	judgeVersion       = "judge/1"
 	judgePromptVersion = "judge-prompt/1"
 	workerIdleDelay    = 500 * time.Millisecond
+	workerPersistLimit = 10 * time.Second
 )
 
 type submissionWorker struct {
@@ -57,7 +60,9 @@ func (w submissionWorker) process(ctx context.Context, job judgeJobRecord) {
 	started := time.Now().UTC()
 	verdict, err := w.judge.Assess(ctx, taskJudgeTurns(job.Task), job.Task.Outcome.SkillsUsed)
 	if err != nil {
-		if failErr := w.store.FailJudgeJob(ctx, job, err.Error(), time.Now().UTC()); failErr != nil {
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
+		defer cancel()
+		if failErr := w.store.FailJudgeJob(persistCtx, job, err.Error(), time.Now().UTC(), isPermanentJudgeFailure(err)); failErr != nil {
 			w.logger.Warn("record judge failure failed", "submission_id", job.SubmissionID, "error", failErr)
 		}
 		return
@@ -78,9 +83,34 @@ func (w submissionWorker) process(ctx context.Context, job judgeJobRecord) {
 		StartedAt:     started,
 		CompletedAt:   completed,
 	}
-	if err := w.store.CompleteJudgeJob(ctx, job, run); err != nil {
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
+	defer cancel()
+	if err := w.store.CompleteJudgeJob(persistCtx, job, run); err != nil {
 		w.logger.Warn("complete judge job failed", "submission_id", job.SubmissionID, "error", err)
 	}
+}
+
+func isPermanentJudgeFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errPermanentJudgeFailure) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"missing api key",
+		"api status 400",
+		"api status 401",
+		"api status 403",
+		"invalid outcome",
+		"decode verdict",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func resetTimer(timer *time.Timer, d time.Duration) {

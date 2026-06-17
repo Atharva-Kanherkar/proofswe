@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 	status TEXT NOT NULL,
 	client_version TEXT,
 	contributor TEXT,
-	payload_sha256 TEXT NOT NULL,
+	payload_sha256 TEXT NOT NULL UNIQUE,
 	scorecard_json JSONB,
 	error_code TEXT,
 	error_message TEXT,
@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 CREATE TABLE IF NOT EXISTS judge_jobs (
 	id BIGSERIAL PRIMARY KEY,
 	submission_id TEXT NOT NULL REFERENCES submissions(submission_id),
+	task_json JSONB NOT NULL,
 	status TEXT NOT NULL,
 	attempts INTEGER NOT NULL DEFAULT 0,
 	run_after TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -114,18 +115,12 @@ func (s *postgresSubmissionStore) CreateSubmission(ctx context.Context, req subm
 	if err != nil {
 		return submissionRecord{}, err
 	}
-	defer rollbackUnlessDone(tx)
+	defer rollbackAfterDone(tx)
 
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO tasks (task_id, task_json, repo_url, base_commit, model, harness, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, now())
-ON CONFLICT (task_id) DO UPDATE SET
-	task_json = EXCLUDED.task_json,
-	repo_url = EXCLUDED.repo_url,
-	base_commit = EXCLUDED.base_commit,
-	model = EXCLUDED.model,
-	harness = EXCLUDED.harness,
-	updated_at = now()
+ON CONFLICT (task_id) DO NOTHING
 `, req.Task.TaskID, taskJSON, req.Task.Repo.RemoteURL, req.Task.Repo.BaseCommit, req.Task.Model, req.Task.Harness)
 	if err != nil {
 		return submissionRecord{}, fmt.Errorf("upsert task: %w", err)
@@ -135,17 +130,24 @@ ON CONFLICT (task_id) DO UPDATE SET
 	err = tx.QueryRowContext(ctx, `
 INSERT INTO submissions (submission_id, task_id, status, client_version, contributor, payload_sha256)
 VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (payload_sha256) DO UPDATE SET updated_at = submissions.updated_at
 RETURNING submission_id, task_id, status, COALESCE(client_version, ''), COALESCE(contributor, ''), payload_sha256, created_at, updated_at
 `, submissionID, req.Task.TaskID, submissionStatusQueued, req.ClientVersion, req.Task.Contributor, payloadHash).
 		Scan(&rec.SubmissionID, &rec.TaskID, &rec.Status, &rec.ClientVersion, &rec.Contributor, &rec.PayloadSHA256, &rec.CreatedAt, &rec.UpdatedAt)
 	if err != nil {
 		return submissionRecord{}, fmt.Errorf("create submission: %w", err)
 	}
+	if rec.SubmissionID != submissionID {
+		if err := tx.Commit(); err != nil {
+			return submissionRecord{}, err
+		}
+		return rec, nil
+	}
 
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO judge_jobs (submission_id, status, run_after)
-VALUES ($1, $2, now())
-`, submissionID, judgeJobStatusQueued); err != nil {
+INSERT INTO judge_jobs (submission_id, task_json, status, run_after)
+VALUES ($1, $2, $3, now())
+`, submissionID, taskJSON, judgeJobStatusQueued); err != nil {
 		return submissionRecord{}, fmt.Errorf("enqueue judge job: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -187,10 +189,24 @@ func (s *postgresSubmissionStore) ClaimJudgeJob(ctx context.Context, workerID st
 	if err != nil {
 		return judgeJobRecord{}, false, err
 	}
-	defer rollbackUnlessDone(tx)
+	defer rollbackAfterDone(tx)
 
 	var job judgeJobRecord
 	var rawTask []byte
+	if _, err := tx.ExecContext(ctx, `
+WITH stale AS (
+	UPDATE judge_jobs
+	SET status = $1, run_after = $2, locked_at = NULL, locked_by = NULL, updated_at = $2
+	WHERE status = $3 AND locked_at IS NOT NULL AND locked_at <= $4
+	RETURNING submission_id
+)
+UPDATE submissions
+SET status = $1, updated_at = $2
+WHERE submission_id IN (SELECT submission_id FROM stale)
+`, judgeJobStatusQueued, now, judgeJobStatusJudging, now.Add(-judgeVisibilityTimeout)); err != nil {
+		return judgeJobRecord{}, false, err
+	}
+
 	err = tx.QueryRowContext(ctx, `
 WITH next_job AS (
 	SELECT id
@@ -203,12 +219,10 @@ WITH next_job AS (
 	UPDATE judge_jobs
 	SET status = $3, attempts = attempts + 1, locked_at = $2, locked_by = $4, updated_at = $2
 	WHERE id = (SELECT id FROM next_job)
-	RETURNING id, submission_id, attempts
+	RETURNING id, submission_id, attempts, task_json
 )
-SELECT claimed.id, claimed.submission_id, claimed.attempts, t.task_json
+SELECT claimed.id, claimed.submission_id, claimed.attempts, claimed.task_json
 FROM claimed
-JOIN submissions s ON s.submission_id = claimed.submission_id
-JOIN tasks t ON t.task_id = s.task_id
 `, judgeJobStatusQueued, now, judgeJobStatusJudging, workerID).Scan(&job.ID, &job.SubmissionID, &job.Attempts, &rawTask)
 	if errors.Is(err, sql.ErrNoRows) {
 		return judgeJobRecord{}, false, nil
@@ -244,7 +258,7 @@ func (s *postgresSubmissionStore) CompleteJudgeJob(ctx context.Context, job judg
 	if err != nil {
 		return err
 	}
-	defer rollbackUnlessDone(tx)
+	defer rollbackAfterDone(tx)
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO judge_runs (submission_id, judge_model, judge_version, prompt_version, verdict_json, scorecard_json, status, started_at, completed_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -268,13 +282,13 @@ WHERE id = $3
 	return tx.Commit()
 }
 
-func (s *postgresSubmissionStore) FailJudgeJob(ctx context.Context, job judgeJobRecord, errMessage string, now time.Time) error {
+func (s *postgresSubmissionStore) FailJudgeJob(ctx context.Context, job judgeJobRecord, errMessage string, now time.Time, permanent bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer rollbackUnlessDone(tx)
-	if job.Attempts >= maxJudgeAttempts {
+	defer rollbackAfterDone(tx)
+	if permanent || job.Attempts >= maxJudgeAttempts {
 		if _, err := tx.ExecContext(ctx, `
 UPDATE judge_jobs
 SET status = $1, last_error = $2, updated_at = $3, locked_at = NULL, locked_by = NULL
@@ -295,7 +309,7 @@ WHERE submission_id = $4
 UPDATE judge_jobs
 SET status = $1, run_after = $2, last_error = $3, updated_at = $4, locked_at = NULL, locked_by = NULL
 WHERE id = $5
-`, judgeJobStatusQueued, now.Add(time.Duration(job.Attempts)*30*time.Second), errMessage, now, job.ID); err != nil {
+`, judgeJobStatusQueued, now.Add(time.Duration(job.Attempts)*judgeRetryBackoff), errMessage, now, job.ID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -310,7 +324,7 @@ WHERE submission_id = $4
 
 func (s *postgresSubmissionStore) Close() error { return s.db.Close() }
 
-func rollbackUnlessDone(tx *sql.Tx) {
+func rollbackAfterDone(tx *sql.Tx) {
 	_ = tx.Rollback()
 }
 

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -25,7 +26,9 @@ const (
 	judgeJobStatusJudged  = "judged"
 	judgeJobStatusFailed  = "failed"
 
-	maxJudgeAttempts = 3
+	maxJudgeAttempts       = 3
+	judgeRetryBackoff      = 30 * time.Second
+	judgeVisibilityTimeout = 5 * time.Minute
 )
 
 type submissionStore interface {
@@ -33,9 +36,11 @@ type submissionStore interface {
 	GetSubmission(context.Context, string) (submissionRecord, bool, error)
 	ClaimJudgeJob(context.Context, string, time.Time) (judgeJobRecord, bool, error)
 	CompleteJudgeJob(context.Context, judgeJobRecord, judgeRunRecord) error
-	FailJudgeJob(context.Context, judgeJobRecord, string, time.Time) error
+	FailJudgeJob(context.Context, judgeJobRecord, string, time.Time, bool) error
 	Close() error
 }
+
+var errPermanentJudgeFailure = errors.New("permanent judge failure")
 
 type submissionRecord struct {
 	SubmissionID  string
@@ -105,6 +110,7 @@ type memorySubmissionStore struct {
 	nextJobID   int64
 	tasks       map[string]corpus.Task
 	submissions map[string]submissionRecord
+	byPayload   map[string]string
 	jobs        map[int64]memoryJudgeJob
 	runs        []judgeRunRecord
 }
@@ -125,6 +131,7 @@ func newMemorySubmissionStore() *memorySubmissionStore {
 	return &memorySubmissionStore{
 		tasks:       make(map[string]corpus.Task),
 		submissions: make(map[string]submissionRecord),
+		byPayload:   make(map[string]string),
 		jobs:        make(map[int64]memoryJudgeJob),
 	}
 }
@@ -145,6 +152,10 @@ func (s *memorySubmissionStore) CreateSubmission(_ context.Context, req submitRe
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if existingID := s.byPayload[payloadHash]; existingID != "" {
+		rec := s.submissions[existingID]
+		return rec, nil
+	}
 	if _, ok := s.tasks[req.Task.TaskID]; !ok {
 		s.tasks[req.Task.TaskID] = req.Task
 	}
@@ -159,6 +170,7 @@ func (s *memorySubmissionStore) CreateSubmission(_ context.Context, req submitRe
 		UpdatedAt:     now,
 	}
 	s.submissions[submissionID] = rec
+	s.byPayload[payloadHash] = submissionID
 	s.nextJobID++
 	s.jobs[s.nextJobID] = memoryJudgeJob{
 		record:    judgeJobRecord{ID: s.nextJobID, SubmissionID: submissionID, Task: req.Task},
@@ -181,7 +193,15 @@ func (s *memorySubmissionStore) ClaimJudgeJob(_ context.Context, workerID string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, job := range s.jobs {
+		if job.status == judgeJobStatusJudging && !job.lockedAt.IsZero() && now.Sub(job.lockedAt) >= judgeVisibilityTimeout {
+			job.status = judgeJobStatusQueued
+			job.lockedAt = time.Time{}
+			job.lockedBy = ""
+			job.runAfter = now
+			job.updatedAt = now
+		}
 		if job.status != judgeJobStatusQueued || job.runAfter.After(now) {
+			s.jobs[id] = job
 			continue
 		}
 		job.status = judgeJobStatusJudging
@@ -216,14 +236,14 @@ func (s *memorySubmissionStore) CompleteJudgeJob(_ context.Context, job judgeJob
 	return nil
 }
 
-func (s *memorySubmissionStore) FailJudgeJob(_ context.Context, job judgeJobRecord, errMessage string, now time.Time) error {
+func (s *memorySubmissionStore) FailJudgeJob(_ context.Context, job judgeJobRecord, errMessage string, now time.Time, permanent bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	stored := s.jobs[job.ID]
 	stored.lastError = errMessage
 	stored.updatedAt = now
 	rec := s.submissions[job.SubmissionID]
-	if job.Attempts >= maxJudgeAttempts {
+	if permanent || job.Attempts >= maxJudgeAttempts {
 		stored.status = judgeJobStatusFailed
 		stored.failedDone = true
 		rec.Status = submissionStatusFailed
@@ -233,7 +253,7 @@ func (s *memorySubmissionStore) FailJudgeJob(_ context.Context, job judgeJobReco
 		stored.status = judgeJobStatusQueued
 		stored.lockedAt = time.Time{}
 		stored.lockedBy = ""
-		stored.runAfter = now.Add(time.Duration(job.Attempts) * 100 * time.Millisecond)
+		stored.runAfter = now.Add(time.Duration(job.Attempts) * judgeRetryBackoff)
 		rec.Status = submissionStatusQueued
 		rec.ErrorMessage = errMessage
 	}

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/corpus"
@@ -75,14 +76,21 @@ func newSubmissionHandlerWithContext(ctx context.Context, cfg Config, opts judge
 		return nil, nil, err
 	}
 	workerCtx, cancelWorker := context.WithCancel(ctx)
-	go submissionWorker{store: store, judge: j, workerID: "proofswe-api", logger: slog.Default()}.Run(workerCtx)
+	var workerWG sync.WaitGroup
+	workerWG.Add(1)
+	go func() {
+		defer workerWG.Done()
+		submissionWorker{store: store, judge: j, workerID: "proofswe-api", logger: slog.Default()}.Run(workerCtx)
+	}()
 	cleanup := func() {
 		cancelWorker()
+		workerWG.Wait()
 		_ = store.Close()
 	}
 
 	apiToken := strings.TrimSpace(getenvOrEmpty(cfg, "PROOFSWE_API_TOKEN"))
 	requireToken := strings.EqualFold(strings.TrimSpace(getenvOrEmpty(cfg, "PROOFSWE_REQUIRE_SUBMIT_TOKEN")), "true")
+	rateLimiter := newSubmitRateLimiter(120, time.Minute)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -99,8 +107,13 @@ func newSubmissionHandlerWithContext(ctx context.Context, cfg Config, opts judge
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if requireToken && (apiToken == "" || r.Header.Get("authorization") != "Bearer "+apiToken) {
+		authorized := apiToken != "" && r.Header.Get("authorization") == "Bearer "+apiToken
+		if requireToken && !authorized {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if !authorized && !rateLimiter.allow(r) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
 		var req submitRequest

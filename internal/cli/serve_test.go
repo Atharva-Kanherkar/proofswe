@@ -273,12 +273,14 @@ func TestMemorySubmissionStore_DedupesTasksAndRetriesJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create first: %v", err)
 	}
-	second, err := store.CreateSubmission(t.Context(), req)
+	changed := task
+	changed.Prompts[0].Text = "same task id, different retry transcript"
+	second, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, ClientVersion: "test", Task: changed})
 	if err != nil {
 		t.Fatalf("create second: %v", err)
 	}
 	if first.SubmissionID == second.SubmissionID {
-		t.Fatal("submissions should be unique")
+		t.Fatal("different payloads should create different submissions")
 	}
 	if got := store.taskCount(); got != 1 {
 		t.Fatalf("task count = %d, want 1", got)
@@ -290,10 +292,10 @@ func TestMemorySubmissionStore_DedupesTasksAndRetriesJobs(t *testing.T) {
 	if job.Attempts != 1 {
 		t.Fatalf("attempts after claim = %d, want 1", job.Attempts)
 	}
-	if err := store.FailJudgeJob(t.Context(), job, "temporary", time.Now()); err != nil {
+	if err := store.FailJudgeJob(t.Context(), job, "temporary", time.Now(), false); err != nil {
 		t.Fatalf("fail job: %v", err)
 	}
-	job, ok, err = store.ClaimJudgeJob(t.Context(), "worker", time.Now().Add(time.Second))
+	job, ok, err = store.ClaimJudgeJob(t.Context(), "worker", time.Now().Add(judgeRetryBackoff+time.Second))
 	if err != nil || !ok {
 		t.Fatalf("reclaim job ok=%v err=%v", ok, err)
 	}
@@ -330,11 +332,12 @@ func TestMemorySubmissionStore_MarksPermanentJudgeFailure(t *testing.T) {
 	var job judgeJobRecord
 	for i := 0; i < maxJudgeAttempts; i++ {
 		var ok bool
-		job, ok, err = store.ClaimJudgeJob(t.Context(), "worker", time.Now().Add(time.Second))
+		claimAt := time.Now().Add(time.Duration(i+1)*maxJudgeAttempts*judgeRetryBackoff + time.Second)
+		job, ok, err = store.ClaimJudgeJob(t.Context(), "worker", claimAt)
 		if err != nil || !ok {
 			t.Fatalf("claim %d ok=%v err=%v", i, ok, err)
 		}
-		if err := store.FailJudgeJob(t.Context(), job, "still failing", time.Now()); err != nil {
+		if err := store.FailJudgeJob(t.Context(), job, "still failing", time.Now(), false); err != nil {
 			t.Fatalf("fail %d: %v", i, err)
 		}
 	}
@@ -344,6 +347,138 @@ func TestMemorySubmissionStore_MarksPermanentJudgeFailure(t *testing.T) {
 	}
 	if got.Status != submissionStatusFailed || got.ErrorCode != "judge_failed" {
 		t.Fatalf("failed submission = %+v", got)
+	}
+}
+
+func TestMemorySubmissionStore_IdempotentPayloadReusesSubmission(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	req := submitRequest{SchemaVersion: submitSchemaVersion, ClientVersion: "test", Task: task}
+	first, err := store.CreateSubmission(t.Context(), req)
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	second, err := store.CreateSubmission(t.Context(), req)
+	if err != nil {
+		t.Fatalf("create duplicate: %v", err)
+	}
+	if first.SubmissionID != second.SubmissionID {
+		t.Fatalf("duplicate payload got new submission %q, want %q", second.SubmissionID, first.SubmissionID)
+	}
+	if len(store.jobs) != 1 {
+		t.Fatalf("duplicate payload enqueued %d jobs, want 1", len(store.jobs))
+	}
+}
+
+func TestMemorySubmissionStore_ReclaimsStaleJudgingJob(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	first, ok, err := store.ClaimJudgeJob(t.Context(), "worker-1", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim first ok=%v err=%v", ok, err)
+	}
+	if first.Attempts != 1 {
+		t.Fatalf("first attempts = %d, want 1", first.Attempts)
+	}
+	second, ok, err := store.ClaimJudgeJob(t.Context(), "worker-2", time.Now().Add(judgeVisibilityTimeout+time.Second))
+	if err != nil || !ok {
+		t.Fatalf("claim stale ok=%v err=%v", ok, err)
+	}
+	if second.ID != first.ID || second.Attempts != 2 {
+		t.Fatalf("stale reclaim = %+v, want same job second attempt", second)
+	}
+	got, ok, err := store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get submission ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusJudging {
+		t.Fatalf("status after stale reclaim = %q, want judging", got.Status)
+	}
+}
+
+func TestMemorySubmissionStore_PermanentJudgeFailureDoesNotRetry(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	if err := store.FailJudgeJob(t.Context(), job, "judge: missing API key", time.Now(), true); err != nil {
+		t.Fatalf("fail permanent: %v", err)
+	}
+	if _, ok, err := store.ClaimJudgeJob(t.Context(), "worker", time.Now().Add(24*time.Hour)); err != nil || ok {
+		t.Fatalf("permanent failure should not reclaim ok=%v err=%v", ok, err)
+	}
+	got, ok, err := store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get submission ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusFailed {
+		t.Fatalf("status = %q, want failed", got.Status)
+	}
+}
+
+func TestSubmitRateLimiter(t *testing.T) {
+	limiter := newSubmitRateLimiter(2, time.Minute)
+	req := httptest.NewRequest(http.MethodPost, "/v1/submissions", nil)
+	req.RemoteAddr = "203.0.113.10:1234"
+	if !limiter.allow(req) || !limiter.allow(req) {
+		t.Fatal("first two requests should pass")
+	}
+	if limiter.allow(req) {
+		t.Fatal("third request should be rate limited")
+	}
+	other := httptest.NewRequest(http.MethodPost, "/v1/submissions", nil)
+	other.RemoteAddr = "203.0.113.11:1234"
+	if !limiter.allow(other) {
+		t.Fatal("different client should get its own bucket")
+	}
+}
+
+func TestSubmissionWorker_PersistsVerdictAfterContextCanceled(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abc123", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	w := submissionWorker{
+		store: store,
+		judge: judge.FakeJudge{V: judge.Verdict{
+			Outcome:   judge.OutcomeAccepted,
+			Sentiment: 0.5,
+		}},
+	}
+	w.process(ctx, job)
+	got, ok, err := store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get submission ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusJudged || got.Scorecard == nil {
+		t.Fatalf("worker did not persist completed verdict after cancellation: %+v", got)
+	}
+}
+
+func TestPostgresSubmissionSchemaProtectsQueuedJobSnapshot(t *testing.T) {
+	if !strings.Contains(postgresMigrations, "task_json JSONB NOT NULL") {
+		t.Fatal("judge_jobs must snapshot task_json so queued jobs do not read mutable tasks rows")
+	}
+	if !strings.Contains(postgresMigrations, "payload_sha256 TEXT NOT NULL UNIQUE") {
+		t.Fatal("submissions must make payload_sha256 unique for idempotency")
 	}
 }
 
