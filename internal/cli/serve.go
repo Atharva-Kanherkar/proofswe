@@ -68,6 +68,7 @@ func newSubmissionHandler(cfg Config, opts judgeOptions) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	apiToken := strings.TrimSpace(getenvOrEmpty(cfg, "PROOFSWE_API_TOKEN"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -82,6 +83,10 @@ func newSubmissionHandler(cfg Config, opts judgeOptions) (http.Handler, error) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("allow", http.MethodPost)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if apiToken != "" && r.Header.Get("authorization") != "Bearer "+apiToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		var req submitRequest
