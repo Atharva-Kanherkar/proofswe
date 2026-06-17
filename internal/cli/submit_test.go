@@ -216,9 +216,9 @@ func TestSubmitCommand_UsesEnvEndpointAndToken(t *testing.T) {
 	}
 }
 
-func TestSubmitEndpoint_DefaultsToHostedComDomain(t *testing.T) {
+func TestSubmitEndpoint_DefaultsToHostedAPIComDomain(t *testing.T) {
 	cfg := submitTestConfig(t, t.TempDir(), io.Discard, io.Discard)
-	if got := submitEndpoint(cfg, ""); got != "https://proofswe.com/v1/submissions" {
+	if got := submitEndpoint(cfg, ""); got != "https://api.proofswe.com/v1/submissions" {
 		t.Fatalf("default endpoint = %q", got)
 	}
 }

@@ -72,6 +72,16 @@ CREATE TABLE IF NOT EXISTS judge_runs (
 );
 `
 
+const postgresGetSubmissionQuery = `
+SELECT s.submission_id, s.task_id, s.status, COALESCE(s.client_version, ''), COALESCE(s.contributor, ''),
+       s.payload_sha256, COALESCE(s.scorecard_json::text, ''), s.error_code, s.error_message,
+       COALESCE(t.github_path, ''), COALESCE(t.github_pr_url, ''), COALESCE(t.github_commit_sha, ''),
+       s.created_at, s.updated_at
+FROM submissions s
+JOIN tasks t ON t.task_id = s.task_id
+WHERE s.submission_id = $1
+`
+
 type postgresSubmissionStore struct {
 	db *sql.DB
 }
@@ -160,15 +170,7 @@ func (s *postgresSubmissionStore) GetSubmission(ctx context.Context, submissionI
 	var rec submissionRecord
 	var scorecardJSON string
 	var errorCode, errorMessage sql.NullString
-	err := s.db.QueryRowContext(ctx, `
-SELECT submission_id, task_id, status, COALESCE(client_version, ''), COALESCE(contributor, ''),
-       payload_sha256, COALESCE(scorecard_json::text, ''), error_code, error_message,
-       COALESCE(t.github_path, ''), COALESCE(t.github_pr_url, ''), COALESCE(t.github_commit_sha, ''),
-       s.created_at, s.updated_at
-FROM submissions s
-JOIN tasks t ON t.task_id = s.task_id
-WHERE submission_id = $1
-`, submissionID).Scan(&rec.SubmissionID, &rec.TaskID, &rec.Status, &rec.ClientVersion, &rec.Contributor, &rec.PayloadSHA256, &scorecardJSON, &errorCode, &errorMessage, &rec.GitHubPath, &rec.GitHubPRURL, &rec.GitHubCommit, &rec.CreatedAt, &rec.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, postgresGetSubmissionQuery, submissionID).Scan(&rec.SubmissionID, &rec.TaskID, &rec.Status, &rec.ClientVersion, &rec.Contributor, &rec.PayloadSHA256, &scorecardJSON, &errorCode, &errorMessage, &rec.GitHubPath, &rec.GitHubPRURL, &rec.GitHubCommit, &rec.CreatedAt, &rec.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return submissionRecord{}, false, nil
 	}
