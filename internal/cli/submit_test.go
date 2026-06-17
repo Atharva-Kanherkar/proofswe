@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,6 +76,96 @@ func TestSubmitCommand_PostsTaskAndPrintsScorecard(t *testing.T) {
 	}
 	if sawTask.TaskID == "" || len(sawTask.Prompts) == 0 || sawTask.Code.Patch == "" {
 		t.Fatalf("server did not receive a complete task: %+v", sawTask)
+	}
+}
+
+func TestSubmitCommand_NoPathAutoDetectsLatestTranscript(t *testing.T) {
+	repo, transcript := reproducibleSubmitFixture(t)
+	otherRepo := t.TempDir()
+	initRepo(t, otherRepo)
+	home := t.TempDir()
+	current := filepath.Join(home, ".claude", "projects", "-tmp-current", "current.jsonl")
+	other := filepath.Join(home, ".claude", "projects", "-tmp-other", "other.jsonl")
+	subagent := filepath.Join(home, ".claude", "projects", "-tmp-current", "session-a", "subagents", "subagent.jsonl")
+	for _, path := range []string{current, other, subagent} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+	data, err := os.ReadFile(transcript)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	currentData := strings.ReplaceAll(string(data), `"timestamp":`, `"cwd":`+strconvQuote(repo)+`,"timestamp":`)
+	mustWrite(t, current, currentData)
+	mustWrite(t, other, `{"type":"user","uuid":"other","sessionId":"other","cwd":`+strconvQuote(otherRepo)+`,"timestamp":"2026-06-01T00:00:00Z","message":{"role":"user","content":"other repo"}}`+"\n")
+	mustWrite(t, subagent, `{"type":"user","uuid":"sub","sessionId":"sub","cwd":`+strconvQuote(repo)+`,"timestamp":"2026-06-01T00:00:00Z","message":{"role":"user","content":"subagent prompt"}}`+"\n")
+	baseTime := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	for path, modTime := range map[string]time.Time{
+		current:  baseTime,
+		other:    baseTime.Add(time.Hour),
+		subagent: baseTime.Add(2 * time.Hour),
+	} {
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			t.Fatalf("chtimes %s: %v", path, err)
+		}
+	}
+
+	var sawTask corpus.Task
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got submitRequest
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		sawTask = got.Task
+		_, _ = io.WriteString(w, `{"submission_id":"sub_auto","status":"judged","scorecard":{"composite":75}}`)
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	cfg := submitTestConfig(t, repo, &stdout, io.Discard)
+	cfg.HomeDir = home
+	if err := runSubmitCommand(t.Context(), cfg, []string{"--endpoint", server.URL}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if len(sawTask.Prompts) == 0 || sawTask.Prompts[0].Text != "add a feature to keep.txt" {
+		t.Fatalf("auto-detected wrong transcript task: %+v", sawTask.Prompts)
+	}
+	if !strings.Contains(stdout.String(), "official score: 75 / 100") {
+		t.Fatalf("stdout = %s", stdout.String())
+	}
+}
+
+func TestSubmitCommand_NoWaitReturnsQueuedResponse(t *testing.T) {
+	repo, transcript := reproducibleSubmitFixture(t)
+	var getCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			getCalls++
+			_, _ = io.WriteString(w, `{"submission_id":"sub_wait","status":"judged","scorecard":{"composite":99}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"submission_id":"sub_wait","status":"queued","url":"/v1/submissions/sub_wait"}`)
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	cfg := submitTestConfig(t, repo, &stdout, io.Discard)
+	if err := runSubmitCommand(t.Context(), cfg, []string{"--no-wait", "--endpoint", server.URL, transcript}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if getCalls != 0 {
+		t.Fatalf("--no-wait made %d poll requests", getCalls)
+	}
+	if !strings.Contains(stdout.String(), "official score pending") {
+		t.Fatalf("stdout = %s", stdout.String())
+	}
+}
+
+func TestSubmitCommand_RejectsTooManyPaths(t *testing.T) {
+	err := runSubmitCommand(t.Context(), submitTestConfig(t, t.TempDir(), io.Discard, io.Discard), []string{"one.jsonl", "two.jsonl"})
+	if err == nil || !strings.Contains(err.Error(), "at most one") {
+		t.Fatalf("error = %v, want at most one path", err)
 	}
 }
 

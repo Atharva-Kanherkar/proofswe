@@ -27,6 +27,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "smoke": "node npm/bin/proofswe.js version"
+    "smoke": "node npm/bin/proofswe.js version",
+    "test": "node npm/test-wrapper.mjs"
   }
 }

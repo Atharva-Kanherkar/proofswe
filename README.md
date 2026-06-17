@@ -85,13 +85,25 @@ npx proofswe version
 Submit a real Codex or Claude Code transcript for server-side judging:
 
 ```sh
-proofswe submit ~/.codex/sessions/.../rollout-*.jsonl --harness=codex
+proofswe submit
 ```
 
-`submit` builds the same scrubbed reproducible task as `contribute`, sends it to
-the proofswe API, and prints the server scorecard. The contributor does not need
-an OpenAI or Anthropic key; the official judge runs on the proofswe server. Use
-`PROOFSWE_API_URL` or `--endpoint` to point at a staging server.
+`submit` auto-detects the latest supported Codex or Claude Code transcript for
+the current git repo, builds the same scrubbed reproducible task as
+`contribute`, sends it to the proofswe API, and prints the server scorecard. The
+contributor does not need an OpenAI or Anthropic key; the official judge runs on
+the proofswe server. Use `proofswe submit <path>` for an explicit transcript,
+`--no-wait` for automation, and `PROOFSWE_API_URL` or `--endpoint` to point at a
+staging server.
+
+Agent chat helpers are explicit opt-in:
+
+- Codex: `/prompts:benchmark` plus `$proofswe-benchmark`
+- Claude Code: `$proofswe-benchmark`
+
+```sh
+proofswe agent install
+```
 
 Run the staging judge endpoint with server-side credentials:
 
