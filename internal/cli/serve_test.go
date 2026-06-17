@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -483,6 +484,154 @@ func TestPostgresSubmissionSchemaProtectsQueuedJobSnapshot(t *testing.T) {
 	if !strings.Contains(postgresMigrations, "payload_sha256 TEXT NOT NULL UNIQUE") {
 		t.Fatal("submissions must make payload_sha256 unique for idempotency")
 	}
+}
+
+func TestCorpusTaskPath(t *testing.T) {
+	path, err := corpusTaskPath("sha256:abcdef123456")
+	if err != nil {
+		t.Fatalf("path: %v", err)
+	}
+	if path != "tasks/sha256/ab/abcdef123456.json" {
+		t.Fatalf("path = %q", path)
+	}
+}
+
+func TestSubmissionWorker_PublishesJudgedTask(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abcdef123456", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	publisher := &fakeCorpusPublisher{mapping: corpusMapping{Path: "tasks/sha256/ab/abcdef123456.json", PRURL: "https://github.com/Atharva-Kanherkar/proofswe-corpus/pull/1", CommitSHA: "abc"}}
+	w := submissionWorker{
+		store:     store,
+		judge:     judge.FakeJudge{V: judge.Verdict{Outcome: judge.OutcomeAccepted}},
+		publisher: publisher,
+	}
+	w.process(t.Context(), job)
+	got, ok, err := store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusPubDone || got.GitHubPath == "" || got.GitHubPRURL == "" || got.Scorecard == nil {
+		t.Fatalf("published submission = %+v", got)
+	}
+	if publisher.calls.Load() != 1 {
+		t.Fatalf("publisher calls = %d, want 1", publisher.calls.Load())
+	}
+}
+
+func TestSubmissionWorker_DuplicateTaskReusesExistingMapping(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abcdef123456", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	first, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	publisher := &fakeCorpusPublisher{mapping: corpusMapping{Path: "tasks/sha256/ab/abcdef123456.json", PRURL: "https://github.com/Atharva-Kanherkar/proofswe-corpus/pull/1"}}
+	w := submissionWorker{store: store, judge: judge.FakeJudge{V: judge.Verdict{Outcome: judge.OutcomeAccepted}}, publisher: publisher}
+	job, _, _ := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	w.process(t.Context(), job)
+
+	changed := task
+	changed.Prompts[0].Text = "same task id but another attempt"
+	second, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, ClientVersion: "retry", Task: changed})
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim second ok=%v err=%v", ok, err)
+	}
+	w.process(t.Context(), job)
+	got, ok, err := store.GetSubmission(t.Context(), second.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get second ok=%v err=%v", ok, err)
+	}
+	if got.GitHubPRURL == "" || got.Status != submissionStatusPubDone {
+		t.Fatalf("second submission mapping = %+v", got)
+	}
+	if first.SubmissionID == second.SubmissionID {
+		t.Fatal("second distinct payload should have its own submission")
+	}
+	if publisher.calls.Load() != 1 {
+		t.Fatalf("duplicate task should reuse mapping; publisher calls = %d", publisher.calls.Load())
+	}
+}
+
+func TestSubmissionWorker_PublishFailureKeepsScorecardAndRetriesWithoutRejudge(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpus.FromCapture(reproducibleCaptureForServe(), score.ExtractedSignals{}, true, nil, "sha256:abcdef123456", "", time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))
+	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	var judgeCalls atomic.Int32
+	publisher := &fakeCorpusPublisher{
+		failures: 1,
+		mapping:  corpusMapping{Path: "tasks/sha256/ab/abcdef123456.json", PRURL: "https://github.com/Atharva-Kanherkar/proofswe-corpus/pull/1"},
+	}
+	w := submissionWorker{
+		store:     store,
+		judge:     countingJudge{calls: &judgeCalls, verdict: judge.Verdict{Outcome: judge.OutcomeAccepted}},
+		publisher: publisher,
+	}
+	w.process(t.Context(), job)
+	got, ok, err := store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get after failure ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusJudged || got.Scorecard == nil {
+		t.Fatalf("publish failure should preserve judged scorecard: %+v", got)
+	}
+	job, ok, err = store.ClaimJudgeJob(t.Context(), "worker", time.Now().Add(judgeRetryBackoff+time.Second))
+	if err != nil || !ok {
+		t.Fatalf("claim retry ok=%v err=%v", ok, err)
+	}
+	w.process(t.Context(), job)
+	got, ok, err = store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get after retry ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusPubDone || got.GitHubPath == "" {
+		t.Fatalf("retry did not publish: %+v", got)
+	}
+	if judgeCalls.Load() != 1 {
+		t.Fatalf("retry should not rejudge; judge calls = %d", judgeCalls.Load())
+	}
+}
+
+func TestGitHubConflictClassification(t *testing.T) {
+	if !isGitHubConflict(githubAPIError{StatusCode: http.StatusUnprocessableEntity}) {
+		t.Fatal("422 should be treated as branch/PR conflict")
+	}
+	if !isGitHubNotFound(githubAPIError{StatusCode: http.StatusNotFound}) {
+		t.Fatal("404 should be treated as missing content")
+	}
+}
+
+type fakeCorpusPublisher struct {
+	calls    atomic.Int32
+	failures int
+	mapping  corpusMapping
+}
+
+func (p *fakeCorpusPublisher) Publish(context.Context, corpus.Task, *submitScorecard) (corpusMapping, error) {
+	p.calls.Add(1)
+	if p.failures > 0 {
+		p.failures--
+		return corpusMapping{}, errors.New("temporary github failure")
+	}
+	return p.mapping, nil
 }
 
 type countingJudge struct {

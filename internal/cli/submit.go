@@ -33,12 +33,15 @@ type submitRequest struct {
 }
 
 type submitResponse struct {
-	SubmissionID string           `json:"submission_id,omitempty"`
-	TaskID       string           `json:"task_id,omitempty"`
-	Status       string           `json:"status,omitempty"`
-	URL          string           `json:"url,omitempty"`
-	Judge        submitJudge      `json:"judge,omitempty"`
-	Scorecard    *submitScorecard `json:"scorecard,omitempty"`
+	SubmissionID    string           `json:"submission_id,omitempty"`
+	TaskID          string           `json:"task_id,omitempty"`
+	Status          string           `json:"status,omitempty"`
+	URL             string           `json:"url,omitempty"`
+	GitHubPath      string           `json:"github_path,omitempty"`
+	GitHubPRURL     string           `json:"github_pr_url,omitempty"`
+	GitHubCommitSHA string           `json:"github_commit_sha,omitempty"`
+	Judge           submitJudge      `json:"judge,omitempty"`
+	Scorecard       *submitScorecard `json:"scorecard,omitempty"`
 }
 
 type submitJudge struct {
@@ -292,6 +295,12 @@ func printSubmitText(w io.Writer, r submitResponse) {
 		}
 	} else {
 		_, _ = fmt.Fprintln(w, "\n  official score pending server judge")
+	}
+	if r.GitHubPath != "" {
+		_, _ = fmt.Fprintf(w, "  corpus      %s\n", r.GitHubPath)
+	}
+	if r.GitHubPRURL != "" {
+		_, _ = fmt.Fprintf(w, "  corpus PR   %s\n", r.GitHubPRURL)
 	}
 	if r.URL != "" {
 		_, _ = fmt.Fprintf(w, "\n  %s\n", r.URL)

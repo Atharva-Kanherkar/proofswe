@@ -162,10 +162,13 @@ func (s *postgresSubmissionStore) GetSubmission(ctx context.Context, submissionI
 	var errorCode, errorMessage sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 SELECT submission_id, task_id, status, COALESCE(client_version, ''), COALESCE(contributor, ''),
-       payload_sha256, COALESCE(scorecard_json::text, ''), error_code, error_message, created_at, updated_at
-FROM submissions
+       payload_sha256, COALESCE(scorecard_json::text, ''), error_code, error_message,
+       COALESCE(t.github_path, ''), COALESCE(t.github_pr_url, ''), COALESCE(t.github_commit_sha, ''),
+       s.created_at, s.updated_at
+FROM submissions s
+JOIN tasks t ON t.task_id = s.task_id
 WHERE submission_id = $1
-`, submissionID).Scan(&rec.SubmissionID, &rec.TaskID, &rec.Status, &rec.ClientVersion, &rec.Contributor, &rec.PayloadSHA256, &scorecardJSON, &errorCode, &errorMessage, &rec.CreatedAt, &rec.UpdatedAt)
+`, submissionID).Scan(&rec.SubmissionID, &rec.TaskID, &rec.Status, &rec.ClientVersion, &rec.Contributor, &rec.PayloadSHA256, &scorecardJSON, &errorCode, &errorMessage, &rec.GitHubPath, &rec.GitHubPRURL, &rec.GitHubCommit, &rec.CreatedAt, &rec.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return submissionRecord{}, false, nil
 	}
@@ -234,15 +237,51 @@ FROM claimed
 	if err != nil {
 		return judgeJobRecord{}, false, fmt.Errorf("decode claimed task: %w", err)
 	}
+	var scorecardJSON string
+	if err := tx.QueryRowContext(ctx, `
+SELECT COALESCE(scorecard_json::text, '') FROM submissions WHERE submission_id = $1
+`, job.SubmissionID).Scan(&scorecardJSON); err != nil {
+		return judgeJobRecord{}, false, err
+	}
+	if scorecardJSON != "" {
+		var card submitScorecard
+		if err := json.Unmarshal([]byte(scorecardJSON), &card); err != nil {
+			return judgeJobRecord{}, false, fmt.Errorf("decode claimed scorecard: %w", err)
+		}
+		job.Scorecard = &card
+	}
+	status := submissionStatusJudging
+	if job.Scorecard != nil {
+		status = submissionStatusPublish
+	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE submissions SET status = $1, updated_at = $2 WHERE submission_id = $3
-`, submissionStatusJudging, now, job.SubmissionID); err != nil {
+`, status, now, job.SubmissionID); err != nil {
 		return judgeJobRecord{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return judgeJobRecord{}, false, err
 	}
 	return job, true, nil
+}
+
+func (s *postgresSubmissionStore) GetTaskMapping(ctx context.Context, taskID string) (corpusMapping, bool, error) {
+	var mapping corpusMapping
+	err := s.db.QueryRowContext(ctx, `
+SELECT COALESCE(github_path, ''), COALESCE(github_pr_url, ''), COALESCE(github_commit_sha, '')
+FROM tasks
+WHERE task_id = $1
+`, taskID).Scan(&mapping.Path, &mapping.PRURL, &mapping.CommitSHA)
+	if errors.Is(err, sql.ErrNoRows) {
+		return corpusMapping{}, false, nil
+	}
+	if err != nil {
+		return corpusMapping{}, false, err
+	}
+	if mapping.Path == "" && mapping.PRURL == "" && mapping.CommitSHA == "" {
+		return corpusMapping{}, false, nil
+	}
+	return mapping, true, nil
 }
 
 func (s *postgresSubmissionStore) CompleteJudgeJob(ctx context.Context, job judgeJobRecord, run judgeRunRecord) error {
@@ -277,6 +316,77 @@ UPDATE judge_jobs
 SET status = $1, updated_at = $2, locked_at = NULL, locked_by = NULL
 WHERE id = $3
 `, judgeJobStatusJudged, run.CompletedAt, job.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *postgresSubmissionStore) CompletePublishJob(ctx context.Context, job judgeJobRecord, mapping corpusMapping) error {
+	now := time.Now().UTC()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollbackAfterDone(tx)
+	if _, err := tx.ExecContext(ctx, `
+UPDATE tasks
+SET github_path = $1, github_pr_url = $2, github_commit_sha = $3, updated_at = $4
+WHERE task_id = $5
+`, mapping.Path, mapping.PRURL, mapping.CommitSHA, now, job.Task.TaskID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE submissions
+SET status = $1, error_code = NULL, error_message = NULL, updated_at = $2
+WHERE submission_id = $3
+`, submissionStatusPubDone, now, job.SubmissionID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE judge_jobs
+SET status = $1, updated_at = $2, locked_at = NULL, locked_by = NULL
+WHERE id = $3
+`, judgeJobStatusPubDone, now, job.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *postgresSubmissionStore) FailPublishJob(ctx context.Context, job judgeJobRecord, errMessage string, now time.Time, permanent bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollbackAfterDone(tx)
+	if permanent || job.Attempts >= maxJudgeAttempts {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE judge_jobs
+SET status = $1, last_error = $2, updated_at = $3, locked_at = NULL, locked_by = NULL
+WHERE id = $4
+`, judgeJobStatusFailed, errMessage, now, job.ID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+UPDATE submissions
+SET status = $1, error_code = 'publish_failed', error_message = $2, updated_at = $3
+WHERE submission_id = $4
+`, submissionStatusFailed, errMessage, now, job.SubmissionID); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE judge_jobs
+SET status = $1, run_after = $2, last_error = $3, updated_at = $4, locked_at = NULL, locked_by = NULL
+WHERE id = $5
+`, judgeJobStatusQueued, now.Add(time.Duration(job.Attempts)*judgeRetryBackoff), errMessage, now, job.ID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE submissions
+SET status = $1, error_message = $2, updated_at = $3
+WHERE submission_id = $4
+`, submissionStatusJudged, errMessage, now, job.SubmissionID); err != nil {
 		return err
 	}
 	return tx.Commit()

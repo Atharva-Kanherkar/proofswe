@@ -19,11 +19,14 @@ const (
 	submissionStatusQueued  = "queued"
 	submissionStatusJudging = "judging"
 	submissionStatusJudged  = "judged"
+	submissionStatusPublish = "publishing"
+	submissionStatusPubDone = "published"
 	submissionStatusFailed  = "failed"
 
 	judgeJobStatusQueued  = "queued"
 	judgeJobStatusJudging = "judging"
 	judgeJobStatusJudged  = "judged"
+	judgeJobStatusPubDone = "published"
 	judgeJobStatusFailed  = "failed"
 
 	maxJudgeAttempts       = 3
@@ -36,6 +39,9 @@ type submissionStore interface {
 	GetSubmission(context.Context, string) (submissionRecord, bool, error)
 	ClaimJudgeJob(context.Context, string, time.Time) (judgeJobRecord, bool, error)
 	CompleteJudgeJob(context.Context, judgeJobRecord, judgeRunRecord) error
+	GetTaskMapping(context.Context, string) (corpusMapping, bool, error)
+	CompletePublishJob(context.Context, judgeJobRecord, corpusMapping) error
+	FailPublishJob(context.Context, judgeJobRecord, string, time.Time, bool) error
 	FailJudgeJob(context.Context, judgeJobRecord, string, time.Time, bool) error
 	Close() error
 }
@@ -50,6 +56,9 @@ type submissionRecord struct {
 	Contributor   string
 	PayloadSHA256 string
 	Scorecard     *submitScorecard
+	GitHubPath    string
+	GitHubPRURL   string
+	GitHubCommit  string
 	ErrorCode     string
 	ErrorMessage  string
 	CreatedAt     time.Time
@@ -61,6 +70,7 @@ type judgeJobRecord struct {
 	SubmissionID string
 	Attempts     int
 	Task         corpus.Task
+	Scorecard    *submitScorecard
 }
 
 type judgeRunRecord struct {
@@ -109,6 +119,7 @@ type memorySubmissionStore struct {
 	mu          sync.Mutex
 	nextJobID   int64
 	tasks       map[string]corpus.Task
+	mappings    map[string]corpusMapping
 	submissions map[string]submissionRecord
 	byPayload   map[string]string
 	jobs        map[int64]memoryJudgeJob
@@ -130,6 +141,7 @@ type memoryJudgeJob struct {
 func newMemorySubmissionStore() *memorySubmissionStore {
 	return &memorySubmissionStore{
 		tasks:       make(map[string]corpus.Task),
+		mappings:    make(map[string]corpusMapping),
 		submissions: make(map[string]submissionRecord),
 		byPayload:   make(map[string]string),
 		jobs:        make(map[int64]memoryJudgeJob),
@@ -189,6 +201,13 @@ func (s *memorySubmissionStore) GetSubmission(_ context.Context, submissionID st
 	return rec, ok, nil
 }
 
+func (s *memorySubmissionStore) GetTaskMapping(_ context.Context, taskID string) (corpusMapping, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	mapping, ok := s.mappings[taskID]
+	return mapping, ok, nil
+}
+
 func (s *memorySubmissionStore) ClaimJudgeJob(_ context.Context, workerID string, now time.Time) (judgeJobRecord, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -206,12 +225,17 @@ func (s *memorySubmissionStore) ClaimJudgeJob(_ context.Context, workerID string
 		}
 		job.status = judgeJobStatusJudging
 		job.record.Attempts++
+		rec := s.submissions[job.record.SubmissionID]
+		job.record.Scorecard = rec.Scorecard
 		job.lockedAt = now
 		job.lockedBy = workerID
 		job.updatedAt = now
 		s.jobs[id] = job
-		rec := s.submissions[job.record.SubmissionID]
-		rec.Status = submissionStatusJudging
+		if rec.Scorecard != nil {
+			rec.Status = submissionStatusPublish
+		} else {
+			rec.Status = submissionStatusJudging
+		}
 		rec.UpdatedAt = now
 		s.submissions[rec.SubmissionID] = rec
 		return job.record, true, nil
@@ -233,6 +257,50 @@ func (s *memorySubmissionStore) CompleteJudgeJob(_ context.Context, job judgeJob
 	rec.UpdatedAt = now
 	s.submissions[job.SubmissionID] = rec
 	s.runs = append(s.runs, run)
+	return nil
+}
+
+func (s *memorySubmissionStore) CompletePublishJob(_ context.Context, job judgeJobRecord, mapping corpusMapping) error {
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mappings[job.Task.TaskID] = mapping
+	stored := s.jobs[job.ID]
+	stored.status = judgeJobStatusPubDone
+	stored.updatedAt = now
+	s.jobs[job.ID] = stored
+	rec := s.submissions[job.SubmissionID]
+	rec.Status = submissionStatusPubDone
+	rec.GitHubPath = mapping.Path
+	rec.GitHubPRURL = mapping.PRURL
+	rec.GitHubCommit = mapping.CommitSHA
+	rec.UpdatedAt = now
+	s.submissions[job.SubmissionID] = rec
+	return nil
+}
+
+func (s *memorySubmissionStore) FailPublishJob(_ context.Context, job judgeJobRecord, errMessage string, now time.Time, permanent bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored := s.jobs[job.ID]
+	stored.lastError = errMessage
+	stored.updatedAt = now
+	rec := s.submissions[job.SubmissionID]
+	rec.ErrorMessage = errMessage
+	if permanent || job.Attempts >= maxJudgeAttempts {
+		stored.status = judgeJobStatusFailed
+		rec.Status = submissionStatusFailed
+		rec.ErrorCode = "publish_failed"
+	} else {
+		stored.status = judgeJobStatusQueued
+		stored.lockedAt = time.Time{}
+		stored.lockedBy = ""
+		stored.runAfter = now.Add(time.Duration(job.Attempts) * judgeRetryBackoff)
+		rec.Status = submissionStatusJudged
+	}
+	rec.UpdatedAt = now
+	s.jobs[job.ID] = stored
+	s.submissions[job.SubmissionID] = rec
 	return nil
 }
 
