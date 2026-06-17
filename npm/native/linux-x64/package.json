@@ -3,6 +3,10 @@
   "version": "0.0.0-development",
   "description": "Native proofswe binary for Linux x64.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Atharva-Kanherkar/proofswe"
+  },
   "os": ["linux"],
   "cpu": ["x64"],
   "files": ["bin/proofswe"]

@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Atharva-Kanherkar/proofswe.git"
+    "url": "https://github.com/Atharva-Kanherkar/proofswe"
   },
   "bin": {
     "proofswe": "npm/bin/proofswe.js"
