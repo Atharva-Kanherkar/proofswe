@@ -308,7 +308,11 @@ func writeScoreText(w io.Writer, r score.Result) {
 		}
 		_, _ = fmt.Fprintf(w, "  %-11s %s %3.0f   %s\n", a.Name, bar(a.Score), a.Score, a.Detail)
 	}
-	_, _ = fmt.Fprintf(w, "\n  execution score: %.0f / 100   (provisional)\n\n", r.Composite)
+	_, _ = fmt.Fprintf(w, "\n  session utility: %.0f / 100   confidence: %s\n", r.Utility.Score, r.Utility.Confidence)
+	if r.Utility.JudgeNudge != 0 {
+		_, _ = fmt.Fprintf(w, "  judge nudge: %+0.1f (capped)\n", r.Utility.JudgeNudge)
+	}
+	_, _ = fmt.Fprintln(w)
 }
 
 func bar(scoreVal float64) string {
@@ -326,10 +330,11 @@ func writeScoreJSON(w io.Writer, r score.Result, s score.Signals) error {
 	out := struct {
 		Model     string        `json:"model"`
 		Composite float64       `json:"composite"`
+		Utility   score.Utility `json:"utility"`
 		Axes      []score.Axis  `json:"axes"`
 		Signals   score.Signals `json:"signals"`
 		Note      string        `json:"note"`
-	}{r.Model, r.Composite, r.Axes, s, r.Note}
+	}{r.Model, r.Composite, r.Utility, r.Axes, s, r.Note}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
@@ -356,7 +361,7 @@ func renderScoreHTML(r score.Result) string {
 		_, _ = fmt.Fprintf(&b, `<div class=axis><div class=row><span>%s</span><span>%.0f</span></div><div class=bar><div class=fill style="width:%.0f%%"></div></div><div class=muted>%s</div></div>`,
 			html.EscapeString(a.Name), a.Score, a.Score, html.EscapeString(a.Detail))
 	}
-	_, _ = fmt.Fprintf(&b, `<div class=big>%.0f<span class=muted style="font-size:16px"> / 100</span></div><p class=muted>%s</p>`,
-		r.Composite, html.EscapeString(r.Note))
+	_, _ = fmt.Fprintf(&b, `<div class=big>%.0f<span class=muted style="font-size:16px"> / 100</span></div><p class=muted>session utility · confidence %s</p><p class=muted>%s</p>`,
+		r.Utility.Score, html.EscapeString(r.Utility.Confidence), html.EscapeString(r.Note))
 	return b.String()
 }

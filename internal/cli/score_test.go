@@ -28,7 +28,11 @@ func TestScoreCommand_Fixture(t *testing.T) {
 	var got struct {
 		Model     string  `json:"model"`
 		Composite float64 `json:"composite"`
-		Axes      []struct {
+		Utility   struct {
+			Score      float64 `json:"score"`
+			Confidence string  `json:"confidence"`
+		} `json:"utility"`
+		Axes []struct {
 			Name    string `json:"name"`
 			Present bool   `json:"present"`
 		} `json:"axes"`
@@ -65,6 +69,15 @@ func TestScoreCommand_Fixture(t *testing.T) {
 	if got.Composite <= 0 || got.Composite > 100 {
 		t.Errorf("composite = %.1f, want in (0,100]", got.Composite)
 	}
+	if got.Utility.Score <= 0 || got.Utility.Score > 100 {
+		t.Errorf("utility.score = %.1f, want in (0,100]", got.Utility.Score)
+	}
+	if got.Composite != got.Utility.Score {
+		t.Errorf("composite = %.1f, utility.score = %.1f; composite should alias headline utility", got.Composite, got.Utility.Score)
+	}
+	if got.Utility.Confidence == "" {
+		t.Error("utility confidence should be populated")
+	}
 
 	var successPresent bool
 	for _, a := range got.Axes {
@@ -83,7 +96,7 @@ func TestScoreCommand_TextOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("score: %v", err)
 	}
-	for _, want := range []string{"proofswe score", "claude-opus-4-7", "efficiency", "autonomy", "friction", "execution score"} {
+	for _, want := range []string{"proofswe score", "claude-opus-4-7", "efficiency", "autonomy", "friction", "session utility"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text output missing %q\n%s", want, out)
 		}
@@ -117,6 +130,11 @@ func TestScoreCommand_Judge(t *testing.T) {
 	}
 
 	var got struct {
+		Utility struct {
+			Score         float64 `json:"score"`
+			Deterministic float64 `json:"deterministic"`
+			JudgeNudge    float64 `json:"judge_nudge"`
+		} `json:"utility"`
 		Axes []struct {
 			Name    string  `json:"name"`
 			Present bool    `json:"present"`
@@ -141,10 +159,14 @@ func TestScoreCommand_Judge(t *testing.T) {
 	if success == nil || !success.Present {
 		t.Fatalf("success axis should be present once judged; got %+v", got.Axes)
 	}
-	// blended: deterministic (no tests, clean end → 55) with judge (accepted,
-	// 1 correction, +0.8 sentiment → 100): 0.65*55 + 0.35*100 ≈ 70.8.
-	if success.Score < 60 || success.Score > 85 {
-		t.Errorf("blended success = %.1f, want ~71", success.Score)
+	if got.Utility.JudgeNudge <= 0 || got.Utility.JudgeNudge > 12 {
+		t.Errorf("judge nudge = %.1f, want positive capped nudge", got.Utility.JudgeNudge)
+	}
+	if got.Utility.Score <= got.Utility.Deterministic {
+		t.Errorf("utility score %.1f should exceed deterministic %.1f with accepted fake judge", got.Utility.Score, got.Utility.Deterministic)
+	}
+	if success.Score < 55 || success.Score > 70 {
+		t.Errorf("bounded success = %.1f, want deterministic success plus small judge nudge", success.Score)
 	}
 }
 

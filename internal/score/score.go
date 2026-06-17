@@ -1,19 +1,20 @@
 // Package score turns a single session's measured signals into a transparent,
-// provisional scorecard. It is deliberately pure — no IO, no transcript parsing.
+// provisional scorecard. It is deliberately pure - no IO, no transcript parsing.
 // The caller (internal/cli) extracts the signals and hands them in.
 //
-// What it scores TODAY is execution, computed from the transcript alone:
-//   - success    (deterministic transcript signals; optional judge nudge)
+// What it scores TODAY is session utility: the probability-shaped estimate that
+// this transcript represented useful accepted work with tolerable human burden.
+// The old axes remain as evidence:
+//   - success    (deterministic transcript signals; optional bounded judge nudge)
 //   - efficiency (cost + tool calls vs a soft baseline)
 //   - autonomy   (tool-error rate)
 //   - friction   (user turns vs a soft baseline)
 //
-// The success axis is objective-first: tests/build/lint, commit/PR activity, and
-// clean termination set the base score; the behavioral judge (issue #30) is an
-// optional supplement. Axes with no signal are reported as "pending" and excluded
-// rather than scored as zero. Weights are equal and unlearned — learned weights
-// (issue #32) replace this once a labeled subset exists. Treat the number as an
-// execution profile, not a final quality verdict.
+// The headline Utility score uses a logistic/sigmoid model over deterministic
+// transcript signals. That shape is intentional: the long-run target is
+// P(accepted | transcript). Today's coefficients are transparent priors; learned
+// weights (issue #32) can replace them once a labeled subset exists. The judge is
+// a capped nudge, not the scoring engine.
 package score
 
 import (
@@ -77,17 +78,31 @@ type Axis struct {
 	Detail  string  `json:"detail"`
 }
 
+// Utility is the headline per-transcript score. Deterministic is the sigmoid
+// score before any judge input; JudgeNudge is capped so a hallucinated judge
+// cannot overpower transcript evidence.
+type Utility struct {
+	Score         float64  `json:"score"`
+	Deterministic float64  `json:"deterministic"`
+	JudgeNudge    float64  `json:"judge_nudge,omitempty"`
+	Confidence    string   `json:"confidence"`
+	Logit         float64  `json:"logit"`
+	Evidence      []string `json:"evidence,omitempty"`
+}
+
 // Result is the scorecard: the per-axis scores plus a composite over present axes.
 type Result struct {
 	Model     string  `json:"model,omitempty"`
 	Axes      []Axis  `json:"axes"`
 	Composite float64 `json:"composite"`
+	Utility   Utility `json:"utility"`
 	Note      string  `json:"note"`
 }
 
 const (
 	pendingDetail = "pending — no deterministic success signal or behavioral judge"
-	resultNote    = "provisional score over present axes; equal unlearned weights"
+	resultNote    = "provisional session utility; sigmoid priors, deterministic-first, judge capped"
+	maxJudgeNudge = 12.0
 )
 
 // Score scores Signals against the default baselines.
@@ -102,21 +117,9 @@ func ScoreWith(s Signals, b Baselines) Result {
 		frictionAxis(s, b),
 		successAxis(s),
 	}
+	utility := utilityScore(s)
 
-	var sum float64
-	var n int
-	for _, a := range axes {
-		if a.Present {
-			sum += a.Score
-			n++
-		}
-	}
-	var composite float64
-	if n > 0 {
-		composite = round1(sum / float64(n))
-	}
-
-	return Result{Model: s.Model, Axes: axes, Composite: composite, Note: resultNote}
+	return Result{Model: s.Model, Axes: axes, Composite: utility.Score, Utility: utility, Note: resultNote}
 }
 
 func efficiencyAxis(s Signals, b Baselines) Axis {
@@ -158,7 +161,7 @@ func successAxis(s Signals) Axis {
 	base, detail := deterministicSuccess(s)
 	val := base
 	if s.Success != nil {
-		val = 0.65*base + 0.35*(*s.Success) // provisional blend; learned weights later (#32)
+		val += boundedJudgeNudge(base, *s.Success)
 		detail += " + judge"
 	}
 	return Axis{Name: "success", Present: true, Score: clamp(round1(val), 0, 100), Detail: detail}
@@ -193,6 +196,138 @@ func deterministicSuccess(s Signals) (float64, string) {
 		parts = append(parts, "clean end")
 	}
 	return clamp(score, 0, 100), strings.Join(parts, " · ")
+}
+
+func utilityScore(s Signals) Utility {
+	logit, evidence := deterministicUtilityLogit(s)
+	deterministic := round1(100 * sigmoid(logit))
+	score := deterministic
+	var nudge float64
+	if s.Success != nil {
+		nudge = boundedJudgeNudge(deterministic, *s.Success)
+		score = clamp(round1(deterministic+nudge), 0, 100)
+		if nudge != 0 {
+			evidence = append(evidence, fmt.Sprintf("judge nudge %+0.1f", nudge))
+		}
+	}
+	return Utility{
+		Score:         score,
+		Deterministic: deterministic,
+		JudgeNudge:    round1(nudge),
+		Confidence:    utilityConfidence(s),
+		Logit:         round1(logit),
+		Evidence:      evidence,
+	}
+}
+
+func deterministicUtilityLogit(s Signals) (float64, []string) {
+	logit := -0.35
+	evidence := []string{"baseline -0.35"}
+
+	switch s.Verification {
+	case "passed":
+		logit += 1.6
+		evidence = append(evidence, "verification passed +1.60")
+	case "failed":
+		logit -= 2.0
+		evidence = append(evidence, "verification failed -2.00")
+	default:
+		evidence = append(evidence, "verification unknown +0.00")
+	}
+
+	if s.Extracted != nil && s.Extracted.VerifiedAfterEdit {
+		logit += 0.7
+		evidence = append(evidence, "verified after edit +0.70")
+	}
+	if s.Landed {
+		logit += 1.0
+		evidence = append(evidence, "landed action +1.00")
+	}
+	switch {
+	case s.Terminated == nil:
+		evidence = append(evidence, "termination unknown +0.00")
+	case *s.Terminated:
+		logit += 0.35
+		evidence = append(evidence, "clean end +0.35")
+	default:
+		logit -= 1.5
+		evidence = append(evidence, "abandoned -1.50")
+	}
+
+	if s.Edits > 0 {
+		logit += 0.25
+		evidence = append(evidence, "edits observed +0.25")
+	}
+	if s.Extracted != nil {
+		corrections := capInt(s.Extracted.HumanCorrections, 5)
+		if corrections > 0 {
+			delta := -0.45 * float64(corrections)
+			logit += delta
+			evidence = append(evidence, fmt.Sprintf("human corrections %d %+0.2f", corrections, delta))
+		}
+		interruptions := capInt(s.Extracted.Interruptions, 4)
+		if interruptions > 0 {
+			delta := -0.25 * float64(interruptions)
+			logit += delta
+			evidence = append(evidence, fmt.Sprintf("interruptions %d %+0.2f", interruptions, delta))
+		}
+		rework := capInt(s.Extracted.ReworkCount, 5)
+		if rework > 0 {
+			delta := -0.25 * float64(rework)
+			logit += delta
+			evidence = append(evidence, fmt.Sprintf("rework %d %+0.2f", rework, delta))
+		}
+		if s.Extracted.HumanAcceptances > 0 {
+			logit += 0.8
+			evidence = append(evidence, "human acceptance +0.80")
+		}
+	}
+
+	if s.ToolCalls > 0 && s.ToolErrors > 0 {
+		rate := float64(s.ToolErrors) / float64(s.ToolCalls)
+		delta := -1.2 * clamp(rate, 0, 1)
+		logit += delta
+		evidence = append(evidence, fmt.Sprintf("tool error rate %.0f%% %+0.2f", 100*rate, delta))
+	}
+	if s.Turns > int(DefaultBaselines.Turns) {
+		extra := s.Turns - int(DefaultBaselines.Turns)
+		delta := -0.1 * float64(capInt(extra, 12))
+		logit += delta
+		evidence = append(evidence, fmt.Sprintf("extra human turns %d %+0.2f", extra, delta))
+	}
+
+	return logit, evidence
+}
+
+func boundedJudgeNudge(base, judgeScore float64) float64 {
+	return round1(clamp((judgeScore-base)*0.25, -maxJudgeNudge, maxJudgeNudge))
+}
+
+func utilityConfidence(s Signals) string {
+	objective := s.Verification != "" || s.Landed || s.Terminated != nil
+	friction := s.Extracted != nil && (s.Extracted.HumanCorrections > 0 || s.Extracted.HumanAcceptances > 0 || s.Extracted.Interruptions > 0)
+	switch {
+	case s.Verification != "" && (s.Landed || friction || s.Terminated != nil):
+		return "high"
+	case objective || friction || s.Success != nil:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func sigmoid(x float64) float64 {
+	return 1 / (1 + math.Exp(-x))
+}
+
+func capInt(n, max int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > max {
+		return max
+	}
+	return n
 }
 
 // ratio maps a non-negative quantity to (0,1]: 0 -> 1, ref -> 0.5, large -> ~0.
