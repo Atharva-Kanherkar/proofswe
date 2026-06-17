@@ -66,12 +66,17 @@ func runSubmitCommand(ctx context.Context, cfg Config, args []string) error {
 	flags.SetOutput(io.Discard)
 	var harness, handle, endpoint, token string
 	var asJSON, force bool
+	var wait bool
+	var waitTimeout, pollInterval time.Duration
 	flags.StringVar(&harness, "harness", "", "claudecode|codex (auto-detected if empty)")
 	flags.StringVar(&handle, "as", "", "optional attribution, e.g. @you (omit to stay anonymous)")
 	flags.StringVar(&endpoint, "endpoint", "", "submission endpoint (default: PROOFSWE_API_URL or hosted proofswe API)")
 	flags.StringVar(&token, "token", "", "optional proofswe API token (default: PROOFSWE_API_TOKEN)")
 	flags.BoolVar(&asJSON, "json", false, "emit the server response as JSON")
 	flags.BoolVar(&force, "force", false, "submit even if the task is not fully reproducible")
+	flags.BoolVar(&wait, "wait", true, "poll until the server scorecard is ready")
+	flags.DurationVar(&waitTimeout, "wait-timeout", 2*time.Minute, "maximum time to wait for a server scorecard")
+	flags.DurationVar(&pollInterval, "poll-interval", 2*time.Second, "delay between submission status polls")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
@@ -107,6 +112,13 @@ func runSubmitCommand(ctx context.Context, cfg Config, args []string) error {
 	})
 	if err != nil {
 		return err
+	}
+	if wait && resp.Scorecard == nil && resp.SubmissionID != "" && isPendingSubmissionStatus(resp.Status) {
+		if polled, err := pollSubmission(ctx, endpoint, token, resp, waitTimeout, pollInterval); err == nil {
+			resp = polled
+		} else if !asJSON {
+			_, _ = fmt.Fprintf(cfg.Stderr, "proofswe submit: score polling stopped: %v\n", err)
+		}
 	}
 	if asJSON {
 		enc := json.NewEncoder(cfg.Stdout)
@@ -172,6 +184,79 @@ func submitTask(ctx context.Context, endpoint, token string, reqBody submitReque
 		return submitResponse{}, fmt.Errorf("decode submission response: %w", err)
 	}
 	return out, nil
+}
+
+func pollSubmission(ctx context.Context, endpoint, token string, initial submitResponse, timeout, interval time.Duration) (submitResponse, error) {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	pollURL := initial.URL
+	if pollURL == "" || strings.HasPrefix(pollURL, "/") {
+		pollURL = trimTrailingSlash(endpoint) + "/" + initial.SubmissionID
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	current := initial
+	for {
+		if current.Scorecard != nil || isTerminalSubmissionStatus(current.Status) {
+			return current, nil
+		}
+		select {
+		case <-ctx.Done():
+			return current, ctx.Err()
+		case <-ticker.C:
+		}
+		next, err := getSubmission(ctx, pollURL, token)
+		if err != nil {
+			return current, err
+		}
+		current = next
+	}
+}
+
+func getSubmission(ctx context.Context, url, token string) (submitResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return submitResponse{}, fmt.Errorf("create poll request: %w", err)
+	}
+	req.Header.Set("accept", "application/json")
+	if token != "" {
+		req.Header.Set("authorization", "Bearer "+token)
+	}
+	resp, err := submitHTTPClient.Do(req)
+	if err != nil {
+		return submitResponse{}, fmt.Errorf("poll submission: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return submitResponse{}, fmt.Errorf("poll submission: server status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out submitResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return submitResponse{}, fmt.Errorf("decode poll response: %w", err)
+	}
+	return out, nil
+}
+
+func isPendingSubmissionStatus(status string) bool {
+	switch status {
+	case "", submissionStatusQueued, submissionStatusJudging:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalSubmissionStatus(status string) bool {
+	switch status {
+	case submissionStatusJudged, "publishing", "published", submissionStatusFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func printSubmitText(w io.Writer, r submitResponse) {

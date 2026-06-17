@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/corpus"
@@ -36,10 +38,11 @@ func runServeCommand(ctx context.Context, cfg Config, args []string) error {
 		return fmt.Errorf("%w: serve takes no positional arguments", ErrUsage)
 	}
 
-	handler, err := newSubmissionHandler(cfg, judgeOptions{Provider: judgeProvider, Model: judgeModel})
+	handler, cleanup, err := newSubmissionHandlerWithContext(ctx, cfg, judgeOptions{Provider: judgeProvider, Model: judgeModel})
 	if err != nil {
 		return err
 	}
+	defer cleanup()
 	server := &http.Server{Addr: addr, Handler: handler}
 	errCh := make(chan error, 1)
 	go func() {
@@ -63,12 +66,31 @@ func runServeCommand(ctx context.Context, cfg Config, args []string) error {
 	}
 }
 
-func newSubmissionHandler(cfg Config, opts judgeOptions) (http.Handler, error) {
+func newSubmissionHandlerWithContext(ctx context.Context, cfg Config, opts judgeOptions) (http.Handler, func(), error) {
 	j, err := newServerJudge(cfg, opts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	store, err := newConfiguredSubmissionStore(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	workerCtx, cancelWorker := context.WithCancel(ctx)
+	var workerWG sync.WaitGroup
+	workerWG.Add(1)
+	go func() {
+		defer workerWG.Done()
+		submissionWorker{store: store, judge: j, workerID: "proofswe-api", logger: slog.Default()}.Run(workerCtx)
+	}()
+	cleanup := func() {
+		cancelWorker()
+		workerWG.Wait()
+		_ = store.Close()
+	}
+
 	apiToken := strings.TrimSpace(getenvOrEmpty(cfg, "PROOFSWE_API_TOKEN"))
+	requireToken := strings.EqualFold(strings.TrimSpace(getenvOrEmpty(cfg, "PROOFSWE_REQUIRE_SUBMIT_TOKEN")), "true")
+	rateLimiter := newSubmitRateLimiter(120, time.Minute)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -85,8 +107,13 @@ func newSubmissionHandler(cfg Config, opts judgeOptions) (http.Handler, error) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if apiToken != "" && r.Header.Get("authorization") != "Bearer "+apiToken {
+		authorized := apiToken != "" && r.Header.Get("authorization") == "Bearer "+apiToken
+		if requireToken && !authorized {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if !authorized && !rateLimiter.allow(r) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
 		var req submitRequest
@@ -94,35 +121,69 @@ func newSubmissionHandler(cfg Config, opts judgeOptions) (http.Handler, error) {
 			http.Error(w, "invalid submission json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		resp, err := judgeSubmission(r.Context(), j, req)
+		rec, err := store.CreateSubmission(r.Context(), req)
 		if err != nil {
-			http.Error(w, "judge submission: "+err.Error(), http.StatusBadGateway)
+			http.Error(w, "create submission: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		resp := submitResponse{
+			SubmissionID: rec.SubmissionID,
+			TaskID:       rec.TaskID,
+			Status:       rec.Status,
+			URL:          submissionURL("/v1/submissions", rec.SubmissionID),
+			Judge:        submitJudge{Status: "queued", Model: serverJudgeModel(j), Version: judgeVersion},
+		}
 		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(resp)
 	})
-	return mux, nil
+	mux.HandleFunc("/v1/submissions/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("allow", http.MethodGet+", "+http.MethodHead)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		submissionID := strings.TrimPrefix(r.URL.Path, "/v1/submissions/")
+		if submissionID == "" || strings.Contains(submissionID, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		rec, ok, err := store.GetSubmission(r.Context(), submissionID)
+		if err != nil {
+			http.Error(w, "get submission: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		resp := submitResponse{
+			SubmissionID: rec.SubmissionID,
+			TaskID:       rec.TaskID,
+			Status:       rec.Status,
+			URL:          submissionURL("/v1/submissions", rec.SubmissionID),
+			Judge:        submitJudge{Status: rec.Status, Model: serverJudgeModel(j), Version: judgeVersion},
+			Scorecard:    rec.Scorecard,
+		}
+		w.Header().Set("content-type", "application/json")
+		if r.Method == http.MethodHead {
+			return
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(resp)
+	})
+	return mux, cleanup, nil
 }
 
-func judgeSubmission(ctx context.Context, j judge.Judge, req submitRequest) (submitResponse, error) {
-	task := req.Task
-	verdict, err := j.Assess(ctx, taskJudgeTurns(task), task.Outcome.SkillsUsed)
-	if err != nil {
-		return submitResponse{}, err
+func newConfiguredSubmissionStore(ctx context.Context, cfg Config) (submissionStore, error) {
+	databaseURL := strings.TrimSpace(getenvOrEmpty(cfg, "DATABASE_URL"))
+	if databaseURL == "" {
+		return newMemorySubmissionStore(), nil
 	}
-	success := judge.ScoreSuccess(verdict)
-	signals := signalsFromSubmittedTask(task, success, judge.Label(verdict))
-	result := score.Score(signals)
-	return submitResponse{
-		SubmissionID: shortTaskID(task.TaskID),
-		TaskID:       task.TaskID,
-		Status:       "judged",
-		Judge:        submitJudge{Status: "server_judged", Model: serverJudgeModel(j), Version: "judge/1"},
-		Scorecard:    scorecardForSubmit(result),
-	}, nil
+	return newPostgresSubmissionStore(ctx, databaseURL)
 }
 
 func signalsFromSubmittedTask(task corpus.Task, judgeSuccess float64, judgeLabel string) score.Signals {
