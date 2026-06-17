@@ -230,6 +230,41 @@ func TestScoreCommand_JudgeOptionsRequireLocalJudge(t *testing.T) {
 	}
 }
 
+func TestResolveLocalJudge(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		local, legacy         bool
+		mode, provider, model string
+		want, wantErr         bool
+	}{
+		{name: "default off", want: false},
+		{name: "local flag", local: true, want: true},
+		{name: "legacy judge", legacy: true, want: true},
+		{name: "mode local", mode: "local", want: true},
+		{name: "mode none overrides legacy judge", legacy: true, mode: "none", want: false},
+		{name: "mode none overrides local flag", local: true, mode: "none", want: false},
+		{name: "unknown mode errs", mode: "remote", wantErr: true},
+		{name: "provider requires local judge", provider: "openai", wantErr: true},
+		{name: "provider ok with local judge", local: true, provider: "openai", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveLocalJudge(tc.local, tc.legacy, tc.mode, tc.provider, tc.model)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil (result=%v)", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveLocalJudge = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestScoreCommand_Errors(t *testing.T) {
 	if _, err := runScore(t); err == nil {
 		t.Error("expected error with no transcript path")

@@ -127,16 +127,19 @@ func runScoreCommand(cfg Config, args []string) error {
 }
 
 func resolveLocalJudge(localJudge, legacyJudge bool, judgeMode, judgeProvider, judgeModel string) (bool, error) {
-	mode := strings.ToLower(strings.TrimSpace(judgeMode))
-	switch mode {
-	case "", "none":
+	if legacyJudge {
+		localJudge = true
+	}
+	// An explicit --judge-mode is authoritative: it overrides the deprecated
+	// --judge alias, so `--judge-mode=none` reliably turns the judge off.
+	switch strings.ToLower(strings.TrimSpace(judgeMode)) {
+	case "":
+	case "none":
+		localJudge = false
 	case "local":
 		localJudge = true
 	default:
 		return false, fmt.Errorf("%w: unknown --judge-mode %q", ErrUsage, judgeMode)
-	}
-	if legacyJudge {
-		localJudge = true
 	}
 	if !localJudge && (strings.TrimSpace(judgeProvider) != "" || strings.TrimSpace(judgeModel) != "") {
 		return false, fmt.Errorf("%w: --judge-provider/--judge-model require --local-judge or --judge-mode=local", ErrUsage)
@@ -196,8 +199,8 @@ func scoreTranscript(cfg Config, harness, path string, useLocalJudge bool, opts 
 
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
+		if v := strings.TrimSpace(value); v != "" {
+			return v
 		}
 	}
 	return ""
@@ -388,6 +391,9 @@ func writeScoreText(w io.Writer, r score.Result, meta scoreMetadata) {
 		_, _ = fmt.Fprintf(w, "  %-11s %s %3.0f   %s\n", a.Name, bar(a.Score), a.Score, a.Detail)
 	}
 	_, _ = fmt.Fprintf(w, "\n  session utility: %.0f / 100   confidence: %s\n", r.Utility.Score, r.Utility.Confidence)
+	if r.Utility.Confidence == "low" {
+		_, _ = fmt.Fprintf(w, "  ⚠ low signal — headline is a weak prior, not a measured result\n")
+	}
 	if r.Utility.JudgeNudge != 0 {
 		_, _ = fmt.Fprintf(w, "  local judge nudge: %+0.1f (preview, capped)\n", r.Utility.JudgeNudge)
 	}
@@ -450,5 +456,8 @@ func renderScoreHTML(r score.Result, meta scoreMetadata) string {
 		r.Utility.Score, html.EscapeString(r.Utility.Confidence), html.EscapeString(r.Note))
 	_, _ = fmt.Fprintf(&b, `<p class=muted>score kind: %s · judge status: %s · official judge pending server evaluation</p>`,
 		html.EscapeString(meta.ScoreKind), html.EscapeString(meta.JudgeStatus))
+	if r.Utility.Confidence == "low" {
+		b.WriteString(`<p class=muted>⚠ low signal — headline is a weak prior, not a measured result</p>`)
+	}
 	return b.String()
 }

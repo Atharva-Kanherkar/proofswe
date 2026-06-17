@@ -69,8 +69,8 @@ type Baselines struct {
 var DefaultBaselines = Baselines{CostUSD: 1.0, ToolCalls: 20, Turns: 8}
 
 // Axis is one scored dimension. Present is false for dimensions we cannot score
-// yet (e.g. success); such axes carry a Detail explaining what unlocks them and
-// do not contribute to the composite.
+// yet (e.g. success); such axes carry a Detail explaining what unlocks them.
+// Axes are evidence/profile only — the headline is Utility, not an axis mean.
 type Axis struct {
 	Name    string  `json:"name"`
 	Present bool    `json:"present"`
@@ -90,7 +90,9 @@ type Utility struct {
 	Evidence      []string `json:"evidence,omitempty"`
 }
 
-// Result is the scorecard: the per-axis scores plus a composite over present axes.
+// Result is the scorecard: the per-axis evidence scores plus the headline
+// Utility. Composite is kept as a back-compat alias of Utility.Score (it used to
+// be the mean over present axes); prefer Utility for the headline number.
 type Result struct {
 	Model     string  `json:"model,omitempty"`
 	Axes      []Axis  `json:"axes"`
@@ -117,7 +119,7 @@ func ScoreWith(s Signals, b Baselines) Result {
 		frictionAxis(s, b),
 		successAxis(s),
 	}
-	utility := utilityScore(s)
+	utility := utilityScore(s, b)
 
 	return Result{Model: s.Model, Axes: axes, Composite: utility.Score, Utility: utility, Note: resultNote}
 }
@@ -198,8 +200,8 @@ func deterministicSuccess(s Signals) (float64, string) {
 	return clamp(score, 0, 100), strings.Join(parts, " · ")
 }
 
-func utilityScore(s Signals) Utility {
-	logit, evidence := deterministicUtilityLogit(s)
+func utilityScore(s Signals, b Baselines) Utility {
+	logit, evidence := deterministicUtilityLogit(s, b)
 	deterministic := round1(100 * sigmoid(logit))
 	score := deterministic
 	var nudge float64
@@ -220,80 +222,66 @@ func utilityScore(s Signals) Utility {
 	}
 }
 
-func deterministicUtilityLogit(s Signals) (float64, []string) {
+func deterministicUtilityLogit(s Signals, b Baselines) (float64, []string) {
 	logit := -0.35
-	evidence := []string{"baseline -0.35"}
+	evidence := []string{fmt.Sprintf("baseline %+0.2f", logit)}
+
+	// add applies one weighted signal and records its evidence string from the
+	// actual delta, so the printed evidence can never drift from the coefficient.
+	add := func(delta float64, label string) {
+		logit += delta
+		evidence = append(evidence, fmt.Sprintf("%s %+0.2f", label, delta))
+	}
 
 	switch s.Verification {
 	case "passed":
-		logit += 1.6
-		evidence = append(evidence, "verification passed +1.60")
+		add(1.6, "verification passed")
 	case "failed":
-		logit -= 2.0
-		evidence = append(evidence, "verification failed -2.00")
+		add(-2.0, "verification failed")
 	default:
-		evidence = append(evidence, "verification unknown +0.00")
+		add(0, "verification unknown")
 	}
 
 	if s.Extracted != nil && s.Extracted.VerifiedAfterEdit {
-		logit += 0.7
-		evidence = append(evidence, "verified after edit +0.70")
+		add(0.7, "verified after edit")
 	}
 	if s.Landed {
-		logit += 1.0
-		evidence = append(evidence, "landed action +1.00")
+		add(1.0, "landed action")
 	}
 	switch {
 	case s.Terminated == nil:
-		evidence = append(evidence, "termination unknown +0.00")
+		add(0, "termination unknown")
 	case *s.Terminated:
-		logit += 0.35
-		evidence = append(evidence, "clean end +0.35")
+		add(0.35, "clean end")
 	default:
-		logit -= 1.5
-		evidence = append(evidence, "abandoned -1.50")
+		add(-1.5, "abandoned")
 	}
 
 	if s.Edits > 0 {
-		logit += 0.25
-		evidence = append(evidence, "edits observed +0.25")
+		add(0.25, "edits observed")
 	}
 	if s.Extracted != nil {
-		corrections := capInt(s.Extracted.HumanCorrections, 5)
-		if corrections > 0 {
-			delta := -0.45 * float64(corrections)
-			logit += delta
-			evidence = append(evidence, fmt.Sprintf("human corrections %d %+0.2f", corrections, delta))
+		if corrections := capInt(s.Extracted.HumanCorrections, 5); corrections > 0 {
+			add(-0.45*float64(corrections), fmt.Sprintf("human corrections %d", corrections))
 		}
-		interruptions := capInt(s.Extracted.Interruptions, 4)
-		if interruptions > 0 {
-			delta := -0.25 * float64(interruptions)
-			logit += delta
-			evidence = append(evidence, fmt.Sprintf("interruptions %d %+0.2f", interruptions, delta))
+		if interruptions := capInt(s.Extracted.Interruptions, 4); interruptions > 0 {
+			add(-0.25*float64(interruptions), fmt.Sprintf("interruptions %d", interruptions))
 		}
-		rework := capInt(s.Extracted.ReworkCount, 5)
-		if rework > 0 {
-			delta := -0.25 * float64(rework)
-			logit += delta
-			evidence = append(evidence, fmt.Sprintf("rework %d %+0.2f", rework, delta))
+		if rework := capInt(s.Extracted.ReworkCount, 5); rework > 0 {
+			add(-0.25*float64(rework), fmt.Sprintf("rework %d", rework))
 		}
 		if s.Extracted.HumanAcceptances > 0 {
-			logit += 0.8
-			evidence = append(evidence, "human acceptance +0.80")
+			add(0.8, "human acceptance")
 		}
 	}
 
 	if s.ToolCalls > 0 && s.ToolErrors > 0 {
 		rate := float64(s.ToolErrors) / float64(s.ToolCalls)
-		delta := -1.2 * clamp(rate, 0, 1)
-		logit += delta
-		evidence = append(evidence, fmt.Sprintf("tool error rate %.0f%% %+0.2f", 100*rate, delta))
+		add(-1.2*clamp(rate, 0, 1), fmt.Sprintf("tool error rate %.0f%%", 100*rate))
 	}
-	if s.Turns > int(DefaultBaselines.Turns) {
-		extra := s.Turns - int(DefaultBaselines.Turns)
-		delta := -0.1 * float64(capInt(extra, 12))
-		logit += delta
-		evidence = append(evidence, fmt.Sprintf("extra human turns %d %+0.2f", extra, delta))
+	if s.Turns > int(b.Turns) {
+		extra := s.Turns - int(b.Turns)
+		add(-0.1*float64(capInt(extra, 12)), fmt.Sprintf("extra human turns %d", extra))
 	}
 
 	return logit, evidence
@@ -320,12 +308,12 @@ func sigmoid(x float64) float64 {
 	return 1 / (1 + math.Exp(-x))
 }
 
-func capInt(n, max int) int {
+func capInt(n, limit int) int {
 	if n < 0 {
 		return 0
 	}
-	if n > max {
-		return max
+	if n > limit {
+		return limit
 	}
 	return n
 }

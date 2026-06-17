@@ -14,6 +14,14 @@ import (
 // Overridable so the model id can change without a code edit.
 const DefaultOpenAIModel = "gpt-5.4-mini"
 
+// openAIMaxOutputTokens is deliberately generous: the default OpenAI model is a
+// reasoning model, and reasoning tokens are drawn from (and counted against)
+// this same budget. A tight cap gets consumed by reasoning before any verdict
+// text is emitted, which the Responses API returns as status=incomplete with no
+// message item. Billing is on tokens actually produced, so a high ceiling is
+// nearly free for the tiny JSON verdict while preventing that truncation.
+const openAIMaxOutputTokens = 4096
+
 // DefaultAnthropicModel preserves the previous Anthropic judge default.
 const DefaultAnthropicModel = "claude-haiku-4-5-20251001"
 
@@ -108,7 +116,7 @@ func (j OpenAIJudge) Assess(ctx context.Context, turns []Turn, skills []string) 
 	reqBody, err := json.Marshal(map[string]any{
 		"model":             orDefault(j.Model, DefaultOpenAIModel),
 		"input":             BuildPrompt(turns, skills),
-		"max_output_tokens": 256,
+		"max_output_tokens": openAIMaxOutputTokens,
 		"reasoning":         map[string]string{"effort": "low"},
 	})
 	if err != nil {
@@ -149,8 +157,12 @@ func (j OpenAIJudge) Assess(ctx context.Context, turns []Turn, skills []string) 
 
 func openAIResponseText(body []byte) (string, error) {
 	var parsed struct {
-		OutputText string `json:"output_text"`
-		Output     []struct {
+		OutputText        string `json:"output_text"`
+		Status            string `json:"status"`
+		IncompleteDetails struct {
+			Reason string `json:"reason"`
+		} `json:"incomplete_details"`
+		Output []struct {
 			Content []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -169,6 +181,12 @@ func openAIResponseText(body []byte) (string, error) {
 				return content.Text, nil
 			}
 		}
+	}
+	// A reasoning model that exhausts max_output_tokens before emitting a verdict
+	// comes back incomplete with no message item; report that distinctly so it is
+	// not mistaken for a model that simply answered with nothing.
+	if parsed.Status == "incomplete" && parsed.IncompleteDetails.Reason == "max_output_tokens" {
+		return "", fmt.Errorf("judge: response truncated at max_output_tokens before any verdict text (raise the output budget; reasoning tokens share it)")
 	}
 	return "", nil
 }
