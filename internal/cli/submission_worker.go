@@ -15,7 +15,7 @@ import (
 
 const (
 	judgeVersion       = "judge/1"
-	judgePromptVersion = "judge-prompt/1"
+	judgePromptVersion = "judge-prompt/2"
 	workerIdleDelay    = 500 * time.Millisecond
 	workerPersistLimit = 10 * time.Second
 )
