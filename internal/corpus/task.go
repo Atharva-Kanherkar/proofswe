@@ -227,6 +227,17 @@ func scorecardFrom(r score.Result) *Scorecard {
 	return card
 }
 
+// PermitsCodeRedistribution reports whether the detected license is acceptable
+// for publishing raw code patches into the public corpus.
+func PermitsCodeRedistribution(spdx string) bool {
+	switch spdx {
+	case "MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC", "Unlicense", "0BSD":
+		return true
+	default:
+		return false
+	}
+}
+
 // ReproducibilityProblems returns the reasons a task cannot be reproduced by a
 // third party. An empty slice means the task is a valid reproducible benchmark
 // item. This is the gate `proofswe contribute` enforces before publishing.
@@ -243,9 +254,14 @@ func ReproducibilityProblems(t Task) []string {
 	}
 	if t.Repo.LicenseSPDX == "" {
 		problems = append(problems, "no detected OSI license — code cannot be redistributed")
+	} else if !PermitsCodeRedistribution(t.Repo.LicenseSPDX) {
+		problems = append(problems, "license "+t.Repo.LicenseSPDX+" is not in the corpus redistribution allowlist")
 	}
 	if len(t.Prompts) == 0 {
 		problems = append(problems, "no developer prompt — there is no task statement")
+	}
+	if t.Code.Patch == "" && t.Code.TestPatch == "" {
+		problems = append(problems, "no code patch — publish before committing or supply a diff-backed task")
 	}
 	return problems
 }

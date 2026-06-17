@@ -29,6 +29,7 @@ func TestContributeEmitsReproducibleTask(t *testing.T) {
 	gitAvailable(t)
 	repo := t.TempDir()
 	initRepo(t, repo) // public origin + MIT license + base commit
+	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nADDED_BY_AGENT\n")
 
 	out := filepath.Join(t.TempDir(), "task.json")
 	cfg := Config{
@@ -61,8 +62,34 @@ func TestContributeEmitsReproducibleTask(t *testing.T) {
 	if len(task.Prompts) == 0 || task.Prompts[0].Text != "add a feature to keep.txt" {
 		t.Errorf("prompt not captured: %+v", task.Prompts)
 	}
+	if !strings.Contains(task.Code.Patch, "+ADDED_BY_AGENT") {
+		t.Errorf("code patch not captured: %q", task.Code.Patch)
+	}
 	if task.Scorecard == nil {
 		t.Errorf("scorecard missing")
+	}
+}
+
+func TestContributeRefusesReproducibleMetadataWithoutPatch(t *testing.T) {
+	gitAvailable(t)
+	repo := t.TempDir()
+	initRepo(t, repo) // clean repo: no agent-produced diff to publish
+
+	cfg := Config{
+		HomeDir: t.TempDir(),
+		WorkDir: repo,
+		Stdout:  io.Discard,
+		Stderr:  io.Discard,
+		Getenv:  func(string) string { return "" },
+	}
+	transcript := contributeTranscript(t, "add a feature to keep.txt")
+
+	err := runContributeCommand(cfg, []string{"--print", transcript})
+	if err == nil {
+		t.Fatal("expected refusal for a task without a code patch")
+	}
+	if !strings.Contains(err.Error(), "reproducible") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
@@ -106,5 +133,24 @@ func TestContributeForceEmitsNonReproducible(t *testing.T) {
 	}
 	if task.CorpusSchemaVersion != corpus.SchemaVersion {
 		t.Errorf("schema version = %d", task.CorpusSchemaVersion)
+	}
+}
+
+func TestPublicRemoteDetectionAcceptsCommonGitHosts(t *testing.T) {
+	tests := []struct {
+		remote string
+		want   bool
+	}{
+		{"https://github.com/owner/repo.git", true},
+		{"git@github.com:owner/repo.git", true},
+		{"ssh://git@gitlab.com/owner/repo.git", true},
+		{"git@codeberg.org:owner/repo.git", true},
+		{"https://github.enterprise.example/owner/repo.git", false},
+		{"../local/repo", false},
+	}
+	for _, tt := range tests {
+		if got := isPublicRemote(tt.remote); got != tt.want {
+			t.Errorf("isPublicRemote(%q) = %t, want %t", tt.remote, got, tt.want)
+		}
 	}
 }

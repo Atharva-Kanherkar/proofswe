@@ -103,3 +103,30 @@ func TestReproducibilityProblems(t *testing.T) {
 		t.Fatalf("expected 5 problems, got %d: %v", len(probs), probs)
 	}
 }
+
+func TestReproducibilityProblemsRequireRedistributablePatch(t *testing.T) {
+	task := FromCapture(reproducibleCapture(), score.ExtractedSignals{}, true, nil, "id", "", time.Now())
+	task.Repo.LicenseSPDX = "GPL-3.0"
+	if probs := ReproducibilityProblems(task); len(probs) != 1 || probs[0] != "license GPL-3.0 is not in the corpus redistribution allowlist" {
+		t.Fatalf("GPL task problems = %v", probs)
+	}
+
+	task = FromCapture(reproducibleCapture(), score.ExtractedSignals{}, true, nil, "id", "", time.Now())
+	task.Code = Code{}
+	if probs := ReproducibilityProblems(task); len(probs) != 1 || probs[0] != "no code patch — publish before committing or supply a diff-backed task" {
+		t.Fatalf("patchless task problems = %v", probs)
+	}
+}
+
+func TestPermitsCodeRedistribution(t *testing.T) {
+	for _, spdx := range []string{"MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC", "Unlicense", "0BSD"} {
+		if !PermitsCodeRedistribution(spdx) {
+			t.Errorf("PermitsCodeRedistribution(%q) = false, want true", spdx)
+		}
+	}
+	for _, spdx := range []string{"GPL-3.0", "AGPL-3.0", "MPL-2.0", ""} {
+		if PermitsCodeRedistribution(spdx) {
+			t.Errorf("PermitsCodeRedistribution(%q) = true, want false", spdx)
+		}
+	}
+}

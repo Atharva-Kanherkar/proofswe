@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/core"
+	"github.com/Atharva-Kanherkar/proofswe/internal/corpus"
 	"github.com/Atharva-Kanherkar/proofswe/internal/hashing"
 	"github.com/Atharva-Kanherkar/proofswe/internal/reader"
 	"github.com/Atharva-Kanherkar/proofswe/internal/redact"
@@ -472,20 +473,50 @@ func repoAllowsRawCode(repo core.TaskRepo) bool {
 	if repo.RemoteURL == "" || repo.BaseCommit == "" || repo.LicenseSPDX == "" || !repo.IsPublic {
 		return false
 	}
-	switch repo.LicenseSPDX {
-	case "MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC", "Unlicense", "0BSD":
+	return corpus.PermitsCodeRedistribution(repo.LicenseSPDX)
+}
+
+func isPublicRemote(remote string) bool {
+	lower := strings.ToLower(strings.TrimSpace(remote))
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "private") || strings.Contains(lower, "enterprise") || strings.Contains(lower, "corp") {
+		return false
+	}
+	switch remoteHost(lower) {
+	case "github.com", "gitlab.com", "codeberg.org":
 		return true
 	default:
 		return false
 	}
 }
 
-func isPublicRemote(remote string) bool {
-	lower := strings.ToLower(remote)
-	if strings.Contains(lower, "private") || strings.Contains(lower, "enterprise") || strings.Contains(lower, "corp") {
-		return false
+func remoteHost(remote string) string {
+	if i := strings.Index(remote, "://"); i >= 0 {
+		rest := remote[i+3:]
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			rest = rest[at+1:]
+		}
+		if slash := strings.Index(rest, "/"); slash >= 0 {
+			rest = rest[:slash]
+		}
+		if colon := strings.Index(rest, ":"); colon >= 0 {
+			rest = rest[:colon]
+		}
+		return rest
 	}
-	return strings.Contains(lower, "github.com/") || strings.Contains(lower, "gitlab.com/") || strings.Contains(lower, "codeberg.org/")
+	if at := strings.LastIndex(remote, "@"); at >= 0 {
+		rest := remote[at+1:]
+		if sep := strings.IndexAny(rest, ":/"); sep >= 0 {
+			return rest[:sep]
+		}
+		return rest
+	}
+	if sep := strings.IndexAny(remote, ":/"); sep >= 0 {
+		return remote[:sep]
+	}
+	return remote
 }
 
 func categoryAllowed(categories []core.ConsentCategory, category core.ConsentCategory) bool {
