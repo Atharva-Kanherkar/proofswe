@@ -26,9 +26,15 @@ func TestScoreCommand_Fixture(t *testing.T) {
 	}
 
 	var got struct {
-		Model     string  `json:"model"`
-		Composite float64 `json:"composite"`
-		Axes      []struct {
+		Model       string  `json:"model"`
+		Composite   float64 `json:"composite"`
+		ScoreKind   string  `json:"score_kind"`
+		JudgeStatus string  `json:"judge_status"`
+		Utility     struct {
+			Score      float64 `json:"score"`
+			Confidence string  `json:"confidence"`
+		} `json:"utility"`
+		Axes []struct {
 			Name    string `json:"name"`
 			Present bool   `json:"present"`
 		} `json:"axes"`
@@ -65,6 +71,21 @@ func TestScoreCommand_Fixture(t *testing.T) {
 	if got.Composite <= 0 || got.Composite > 100 {
 		t.Errorf("composite = %.1f, want in (0,100]", got.Composite)
 	}
+	if got.Utility.Score <= 0 || got.Utility.Score > 100 {
+		t.Errorf("utility.score = %.1f, want in (0,100]", got.Utility.Score)
+	}
+	if got.Composite != got.Utility.Score {
+		t.Errorf("composite = %.1f, utility.score = %.1f; composite should alias headline utility", got.Composite, got.Utility.Score)
+	}
+	if got.Utility.Confidence == "" {
+		t.Error("utility confidence should be populated")
+	}
+	if got.ScoreKind != "local_deterministic" {
+		t.Errorf("score_kind = %q, want local_deterministic", got.ScoreKind)
+	}
+	if got.JudgeStatus != "not_run" {
+		t.Errorf("judge_status = %q, want not_run", got.JudgeStatus)
+	}
 
 	var successPresent bool
 	for _, a := range got.Axes {
@@ -83,7 +104,7 @@ func TestScoreCommand_TextOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("score: %v", err)
 	}
-	for _, want := range []string{"proofswe score", "claude-opus-4-7", "efficiency", "autonomy", "friction", "execution score"} {
+	for _, want := range []string{"proofswe score", "claude-opus-4-7", "efficiency", "autonomy", "friction", "session utility", "official judge pending server evaluation"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text output missing %q\n%s", want, out)
 		}
@@ -102,21 +123,28 @@ func TestScoreCommand_HTML(t *testing.T) {
 	}
 }
 
-func TestScoreCommand_Judge(t *testing.T) {
+func TestScoreCommand_LocalJudge(t *testing.T) {
 	// Swap in an offline fake judge so the success axis can be exercised without network.
 	prev := newScoreJudge
-	newScoreJudge = func(Config) (judge.Judge, error) {
+	newScoreJudge = func(Config, judgeOptions) (judge.Judge, error) {
 		return judge.FakeJudge{V: judge.Verdict{Outcome: judge.OutcomeAccepted, Corrections: 1, Sentiment: 0.8}}, nil
 	}
 	t.Cleanup(func() { newScoreJudge = prev })
 
 	fixture := filepath.Join("testdata", "score", "session.jsonl")
-	out, err := runScore(t, "--judge", "--json", fixture)
+	out, err := runScore(t, "--local-judge", "--json", fixture)
 	if err != nil {
-		t.Fatalf("score --judge: %v", err)
+		t.Fatalf("score --local-judge: %v", err)
 	}
 
 	var got struct {
+		ScoreKind   string `json:"score_kind"`
+		JudgeStatus string `json:"judge_status"`
+		Utility     struct {
+			Score         float64 `json:"score"`
+			Deterministic float64 `json:"deterministic"`
+			JudgeNudge    float64 `json:"judge_nudge"`
+		} `json:"utility"`
 		Axes []struct {
 			Name    string  `json:"name"`
 			Present bool    `json:"present"`
@@ -125,6 +153,12 @@ func TestScoreCommand_Judge(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("decode: %v\n%s", err, out)
+	}
+	if got.ScoreKind != "local_with_judge_preview" {
+		t.Errorf("score_kind = %q, want local_with_judge_preview", got.ScoreKind)
+	}
+	if got.JudgeStatus != "local_preview" {
+		t.Errorf("judge_status = %q, want local_preview", got.JudgeStatus)
 	}
 	var success *struct {
 		Present bool
@@ -141,10 +175,93 @@ func TestScoreCommand_Judge(t *testing.T) {
 	if success == nil || !success.Present {
 		t.Fatalf("success axis should be present once judged; got %+v", got.Axes)
 	}
-	// blended: deterministic (no tests, clean end → 55) with judge (accepted,
-	// 1 correction, +0.8 sentiment → 100): 0.65*55 + 0.35*100 ≈ 70.8.
-	if success.Score < 60 || success.Score > 85 {
-		t.Errorf("blended success = %.1f, want ~71", success.Score)
+	if got.Utility.JudgeNudge <= 0 || got.Utility.JudgeNudge > 12 {
+		t.Errorf("judge nudge = %.1f, want positive capped nudge", got.Utility.JudgeNudge)
+	}
+	if got.Utility.Score <= got.Utility.Deterministic {
+		t.Errorf("utility score %.1f should exceed deterministic %.1f with accepted fake judge", got.Utility.Score, got.Utility.Deterministic)
+	}
+	if success.Score < 55 || success.Score > 70 {
+		t.Errorf("bounded success = %.1f, want deterministic success plus small judge nudge", success.Score)
+	}
+}
+
+func TestScoreCommand_JudgeOptions(t *testing.T) {
+	cfg := Config{Getenv: func(k string) string {
+		switch k {
+		case "OPENAI_API_KEY":
+			return "openai-key"
+		case "ANTHROPIC_API_KEY":
+			return "anthropic-key"
+		default:
+			return ""
+		}
+	}}
+
+	j, err := newScoreJudge(cfg, judgeOptions{Provider: "openai", Model: "gpt-test-mini"})
+	if err != nil {
+		t.Fatalf("openai judge: %v", err)
+	}
+	openai, ok := j.(judge.OpenAIJudge)
+	if !ok {
+		t.Fatalf("judge type = %T, want OpenAIJudge", j)
+	}
+	if openai.Model != "gpt-test-mini" {
+		t.Fatalf("openai model = %q, want flag override", openai.Model)
+	}
+
+	j, err = newScoreJudge(cfg, judgeOptions{Provider: "anthropic", Model: "claude-test"})
+	if err != nil {
+		t.Fatalf("anthropic judge: %v", err)
+	}
+	anthropic, ok := j.(judge.AnthropicJudge)
+	if !ok {
+		t.Fatalf("judge type = %T, want AnthropicJudge", j)
+	}
+	if anthropic.Model != "claude-test" {
+		t.Fatalf("anthropic model = %q, want flag override", anthropic.Model)
+	}
+}
+
+func TestScoreCommand_JudgeOptionsRequireLocalJudge(t *testing.T) {
+	fixture := filepath.Join("testdata", "score", "session.jsonl")
+	if _, err := runScore(t, "--judge-provider=openai", fixture); err == nil {
+		t.Fatal("expected judge provider without local judge to fail")
+	}
+}
+
+func TestResolveLocalJudge(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		local, legacy         bool
+		mode, provider, model string
+		want, wantErr         bool
+	}{
+		{name: "default off", want: false},
+		{name: "local flag", local: true, want: true},
+		{name: "legacy judge", legacy: true, want: true},
+		{name: "mode local", mode: "local", want: true},
+		{name: "mode none overrides legacy judge", legacy: true, mode: "none", want: false},
+		{name: "mode none overrides local flag", local: true, mode: "none", want: false},
+		{name: "unknown mode errs", mode: "remote", wantErr: true},
+		{name: "provider requires local judge", provider: "openai", wantErr: true},
+		{name: "provider ok with local judge", local: true, provider: "openai", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveLocalJudge(tc.local, tc.legacy, tc.mode, tc.provider, tc.model)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil (result=%v)", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveLocalJudge = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

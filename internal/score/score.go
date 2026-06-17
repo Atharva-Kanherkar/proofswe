@@ -1,19 +1,20 @@
 // Package score turns a single session's measured signals into a transparent,
-// provisional scorecard. It is deliberately pure — no IO, no transcript parsing.
+// provisional scorecard. It is deliberately pure - no IO, no transcript parsing.
 // The caller (internal/cli) extracts the signals and hands them in.
 //
-// What it scores TODAY is execution, computed from the transcript alone:
-//   - success    (deterministic transcript signals; optional judge nudge)
+// What it scores TODAY is session utility: the probability-shaped estimate that
+// this transcript represented useful accepted work with tolerable human burden.
+// The old axes remain as evidence:
+//   - success    (deterministic transcript signals; optional bounded judge nudge)
 //   - efficiency (cost + tool calls vs a soft baseline)
 //   - autonomy   (tool-error rate)
 //   - friction   (user turns vs a soft baseline)
 //
-// The success axis is objective-first: tests/build/lint, commit/PR activity, and
-// clean termination set the base score; the behavioral judge (issue #30) is an
-// optional supplement. Axes with no signal are reported as "pending" and excluded
-// rather than scored as zero. Weights are equal and unlearned — learned weights
-// (issue #32) replace this once a labeled subset exists. Treat the number as an
-// execution profile, not a final quality verdict.
+// The headline Utility score uses a logistic/sigmoid model over deterministic
+// transcript signals. That shape is intentional: the long-run target is
+// P(accepted | transcript). Today's coefficients are transparent priors; learned
+// weights (issue #32) can replace them once a labeled subset exists. The judge is
+// a capped nudge, not the scoring engine.
 package score
 
 import (
@@ -68,8 +69,8 @@ type Baselines struct {
 var DefaultBaselines = Baselines{CostUSD: 1.0, ToolCalls: 20, Turns: 8}
 
 // Axis is one scored dimension. Present is false for dimensions we cannot score
-// yet (e.g. success); such axes carry a Detail explaining what unlocks them and
-// do not contribute to the composite.
+// yet (e.g. success); such axes carry a Detail explaining what unlocks them.
+// Axes are evidence/profile only — the headline is Utility, not an axis mean.
 type Axis struct {
 	Name    string  `json:"name"`
 	Present bool    `json:"present"`
@@ -77,17 +78,33 @@ type Axis struct {
 	Detail  string  `json:"detail"`
 }
 
-// Result is the scorecard: the per-axis scores plus a composite over present axes.
+// Utility is the headline per-transcript score. Deterministic is the sigmoid
+// score before any judge input; JudgeNudge is capped so a hallucinated judge
+// cannot overpower transcript evidence.
+type Utility struct {
+	Score         float64  `json:"score"`
+	Deterministic float64  `json:"deterministic"`
+	JudgeNudge    float64  `json:"judge_nudge,omitempty"`
+	Confidence    string   `json:"confidence"`
+	Logit         float64  `json:"logit"`
+	Evidence      []string `json:"evidence,omitempty"`
+}
+
+// Result is the scorecard: the per-axis evidence scores plus the headline
+// Utility. Composite is kept as a back-compat alias of Utility.Score (it used to
+// be the mean over present axes); prefer Utility for the headline number.
 type Result struct {
 	Model     string  `json:"model,omitempty"`
 	Axes      []Axis  `json:"axes"`
 	Composite float64 `json:"composite"`
+	Utility   Utility `json:"utility"`
 	Note      string  `json:"note"`
 }
 
 const (
 	pendingDetail = "pending — no deterministic success signal or behavioral judge"
-	resultNote    = "provisional score over present axes; equal unlearned weights"
+	resultNote    = "provisional session utility; sigmoid priors, deterministic-first, judge capped"
+	maxJudgeNudge = 12.0
 )
 
 // Score scores Signals against the default baselines.
@@ -102,21 +119,9 @@ func ScoreWith(s Signals, b Baselines) Result {
 		frictionAxis(s, b),
 		successAxis(s),
 	}
+	utility := utilityScore(s, b)
 
-	var sum float64
-	var n int
-	for _, a := range axes {
-		if a.Present {
-			sum += a.Score
-			n++
-		}
-	}
-	var composite float64
-	if n > 0 {
-		composite = round1(sum / float64(n))
-	}
-
-	return Result{Model: s.Model, Axes: axes, Composite: composite, Note: resultNote}
+	return Result{Model: s.Model, Axes: axes, Composite: utility.Score, Utility: utility, Note: resultNote}
 }
 
 func efficiencyAxis(s Signals, b Baselines) Axis {
@@ -158,7 +163,7 @@ func successAxis(s Signals) Axis {
 	base, detail := deterministicSuccess(s)
 	val := base
 	if s.Success != nil {
-		val = 0.65*base + 0.35*(*s.Success) // provisional blend; learned weights later (#32)
+		val += boundedJudgeNudge(base, *s.Success)
 		detail += " + judge"
 	}
 	return Axis{Name: "success", Present: true, Score: clamp(round1(val), 0, 100), Detail: detail}
@@ -193,6 +198,124 @@ func deterministicSuccess(s Signals) (float64, string) {
 		parts = append(parts, "clean end")
 	}
 	return clamp(score, 0, 100), strings.Join(parts, " · ")
+}
+
+func utilityScore(s Signals, b Baselines) Utility {
+	logit, evidence := deterministicUtilityLogit(s, b)
+	deterministic := round1(100 * sigmoid(logit))
+	score := deterministic
+	var nudge float64
+	if s.Success != nil {
+		nudge = boundedJudgeNudge(deterministic, *s.Success)
+		score = clamp(round1(deterministic+nudge), 0, 100)
+		if nudge != 0 {
+			evidence = append(evidence, fmt.Sprintf("judge nudge %+0.1f", nudge))
+		}
+	}
+	return Utility{
+		Score:         score,
+		Deterministic: deterministic,
+		JudgeNudge:    round1(nudge),
+		Confidence:    utilityConfidence(s),
+		Logit:         round1(logit),
+		Evidence:      evidence,
+	}
+}
+
+func deterministicUtilityLogit(s Signals, b Baselines) (float64, []string) {
+	logit := -0.35
+	evidence := []string{fmt.Sprintf("baseline %+0.2f", logit)}
+
+	// add applies one weighted signal and records its evidence string from the
+	// actual delta, so the printed evidence can never drift from the coefficient.
+	add := func(delta float64, label string) {
+		logit += delta
+		evidence = append(evidence, fmt.Sprintf("%s %+0.2f", label, delta))
+	}
+
+	switch s.Verification {
+	case "passed":
+		add(1.6, "verification passed")
+	case "failed":
+		add(-2.0, "verification failed")
+	default:
+		add(0, "verification unknown")
+	}
+
+	if s.Extracted != nil && s.Extracted.VerifiedAfterEdit {
+		add(0.7, "verified after edit")
+	}
+	if s.Landed {
+		add(1.0, "landed action")
+	}
+	switch {
+	case s.Terminated == nil:
+		add(0, "termination unknown")
+	case *s.Terminated:
+		add(0.35, "clean end")
+	default:
+		add(-1.5, "abandoned")
+	}
+
+	if s.Edits > 0 {
+		add(0.25, "edits observed")
+	}
+	if s.Extracted != nil {
+		if corrections := capInt(s.Extracted.HumanCorrections, 5); corrections > 0 {
+			add(-0.45*float64(corrections), fmt.Sprintf("human corrections %d", corrections))
+		}
+		if interruptions := capInt(s.Extracted.Interruptions, 4); interruptions > 0 {
+			add(-0.25*float64(interruptions), fmt.Sprintf("interruptions %d", interruptions))
+		}
+		if rework := capInt(s.Extracted.ReworkCount, 5); rework > 0 {
+			add(-0.25*float64(rework), fmt.Sprintf("rework %d", rework))
+		}
+		if s.Extracted.HumanAcceptances > 0 {
+			add(0.8, "human acceptance")
+		}
+	}
+
+	if s.ToolCalls > 0 && s.ToolErrors > 0 {
+		rate := float64(s.ToolErrors) / float64(s.ToolCalls)
+		add(-1.2*clamp(rate, 0, 1), fmt.Sprintf("tool error rate %.0f%%", 100*rate))
+	}
+	if s.Turns > int(b.Turns) {
+		extra := s.Turns - int(b.Turns)
+		add(-0.1*float64(capInt(extra, 12)), fmt.Sprintf("extra human turns %d", extra))
+	}
+
+	return logit, evidence
+}
+
+func boundedJudgeNudge(base, judgeScore float64) float64 {
+	return round1(clamp((judgeScore-base)*0.25, -maxJudgeNudge, maxJudgeNudge))
+}
+
+func utilityConfidence(s Signals) string {
+	objective := s.Verification != "" || s.Landed || s.Terminated != nil
+	friction := s.Extracted != nil && (s.Extracted.HumanCorrections > 0 || s.Extracted.HumanAcceptances > 0 || s.Extracted.Interruptions > 0)
+	switch {
+	case s.Verification != "" && (s.Landed || friction || s.Terminated != nil):
+		return "high"
+	case objective || friction || s.Success != nil:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func sigmoid(x float64) float64 {
+	return 1 / (1 + math.Exp(-x))
+}
+
+func capInt(n, limit int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > limit {
+		return limit
+	}
+	return n
 }
 
 // ratio maps a non-negative quantity to (0,1]: 0 -> 1, ref -> 0.5, large -> ~0.

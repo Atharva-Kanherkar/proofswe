@@ -21,7 +21,7 @@ func axisByName(r Result, name string) (Axis, bool) {
 	return Axis{}, false
 }
 
-func TestScore_ExecutionAxes(t *testing.T) {
+func TestScore_ExecutionAxesRemainAsEvidence(t *testing.T) {
 	// 3 tool calls, 1 errored, 2 user turns, ~$1.09 spent.
 	s := Signals{Model: "claude-opus-4-7", ToolCalls: 3, ToolErrors: 1, Turns: 2, CostUSD: 1.09}
 	r := Score(s)
@@ -39,7 +39,10 @@ func TestScore_ExecutionAxes(t *testing.T) {
 	fric, _ := axisByName(r, "friction")
 	approx(t, "friction", fric.Score, 80.0) // 8/(8+2)
 
-	approx(t, "composite", r.Composite, 71.4)
+	approx(t, "utility/composite", r.Composite, r.Utility.Score)
+	if r.Utility.Confidence != "low" {
+		t.Fatalf("confidence = %q, want low for activity-only transcript", r.Utility.Confidence)
+	}
 }
 
 func TestScore_SuccessIsPendingAndExcluded(t *testing.T) {
@@ -51,19 +54,9 @@ func TestScore_SuccessIsPendingAndExcluded(t *testing.T) {
 	if succ.Present {
 		t.Error("success axis must be pending (Present=false) until deterministic signals or judge data exist")
 	}
-	// Composite must be the mean of the 3 present axes only, never dragged to 0 by pending success.
-	var sum float64
-	var n int
-	for _, a := range r.Axes {
-		if a.Present {
-			sum += a.Score
-			n++
-		}
+	if r.Composite != r.Utility.Score {
+		t.Fatalf("composite = %.1f, utility = %.1f; composite should remain the headline score alias", r.Composite, r.Utility.Score)
 	}
-	if n != 3 {
-		t.Fatalf("expected 3 present axes, got %d", n)
-	}
-	approx(t, "composite excludes pending", r.Composite, round1(sum/3))
 }
 
 func TestEstimateCostUSD(t *testing.T) {
@@ -118,5 +111,59 @@ func TestSuccess_JudgeBlendsOntoDeterministic(t *testing.T) {
 	j := 100.0
 	s := Signals{Verification: "passed", Terminated: boolp(true), Success: &j} // deterministic base 85
 	a, _ := axisByName(Score(s), "success")
-	approx(t, "blended", a.Score, 0.65*85+0.35*100) // 90.25
+	approx(t, "bounded nudge", a.Score, 88.8) // 85 + (100-85)*0.25
+}
+
+func TestScore_UtilityRewardsVerifiedAcceptedWork(t *testing.T) {
+	r := Score(Signals{
+		ToolCalls:    5,
+		Turns:        3,
+		Edits:        2,
+		Verification: "passed",
+		Landed:       true,
+		Terminated:   boolp(true),
+		Extracted:    &ExtractedSignals{VerifiedAfterEdit: true, HumanAcceptances: 1},
+	})
+	if r.Utility.Score < 95 {
+		t.Fatalf("utility = %.1f, want high verified utility", r.Utility.Score)
+	}
+	if r.Utility.Confidence != "high" {
+		t.Fatalf("confidence = %q, want high", r.Utility.Confidence)
+	}
+}
+
+func TestScore_UtilityPenalizesFailureAndFriction(t *testing.T) {
+	r := Score(Signals{
+		ToolCalls:    10,
+		ToolErrors:   5,
+		Turns:        16,
+		Edits:        1,
+		Verification: "failed",
+		Terminated:   boolp(false),
+		Extracted:    &ExtractedSignals{HumanCorrections: 5, Interruptions: 2, ReworkCount: 3},
+	})
+	if r.Utility.Score > 5 {
+		t.Fatalf("utility = %.1f, want very low utility for failed high-friction session", r.Utility.Score)
+	}
+}
+
+func TestScore_JudgeIsBoundedNudge(t *testing.T) {
+	j := 100.0
+	r := Score(Signals{Verification: "failed", Terminated: boolp(false), Success: &j})
+	if r.Utility.JudgeNudge != maxJudgeNudge {
+		t.Fatalf("judge nudge = %.1f, want capped %.1f", r.Utility.JudgeNudge, maxJudgeNudge)
+	}
+	if r.Utility.Score > r.Utility.Deterministic+maxJudgeNudge {
+		t.Fatalf("utility = %.1f, deterministic = %.1f; judge exceeded cap", r.Utility.Score, r.Utility.Deterministic)
+	}
+}
+
+func TestScore_UtilityUsesSigmoidShape(t *testing.T) {
+	weak := Score(Signals{ToolCalls: 1, Turns: 1})
+	medium := Score(Signals{Verification: "passed", Terminated: boolp(true)})
+	strong := Score(Signals{Verification: "passed", Landed: true, Terminated: boolp(true), Edits: 1})
+	if !(weak.Utility.Score < medium.Utility.Score && medium.Utility.Score < strong.Utility.Score) {
+		t.Fatalf("utility should rise monotonically with stronger evidence: weak %.1f medium %.1f strong %.1f",
+			weak.Utility.Score, medium.Utility.Score, strong.Utility.Score)
+	}
 }
