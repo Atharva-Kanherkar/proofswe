@@ -21,7 +21,7 @@ import (
 
 const (
 	submitSchemaVersion   = 1
-	defaultSubmitEndpoint = "https://api.proofswe.dev/v1/submissions"
+	defaultSubmitEndpoint = "https://proofswe.com/v1/submissions"
 )
 
 type submitDoer interface {

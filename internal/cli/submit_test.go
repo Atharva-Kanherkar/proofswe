@@ -216,6 +216,13 @@ func TestSubmitCommand_UsesEnvEndpointAndToken(t *testing.T) {
 	}
 }
 
+func TestSubmitEndpoint_DefaultsToHostedComDomain(t *testing.T) {
+	cfg := submitTestConfig(t, t.TempDir(), io.Discard, io.Discard)
+	if got := submitEndpoint(cfg, ""); got != "https://proofswe.com/v1/submissions" {
+		t.Fatalf("default endpoint = %q", got)
+	}
+}
+
 func TestSubmitCommand_RejectsNonReproducibleWithoutForce(t *testing.T) {
 	cfg := submitTestConfig(t, t.TempDir(), io.Discard, io.Discard)
 	transcript := contributeTranscript(t, "do something")
