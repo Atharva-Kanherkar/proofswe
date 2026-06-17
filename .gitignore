@@ -16,3 +16,7 @@
 .ci-bin/
 /dist/
 /proofswe
+
+# Local secrets and generated scratch
+.env.local
+target/
