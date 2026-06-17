@@ -45,6 +45,101 @@ func TestAgentInstallWritesCodexPromptAndSkill(t *testing.T) {
 	}
 }
 
+func TestAgentInstallAutoQuietIfMissingPreservesExistingAssets(t *testing.T) {
+	var stdout bytes.Buffer
+	home := t.TempDir()
+	codexHome := filepath.Join(home, "codex-home")
+	claudeHome := filepath.Join(home, "claude-home")
+	existingSkill := filepath.Join(codexHome, "skills", "proofswe-benchmark", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(existingSkill), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(existingSkill, []byte("custom skill\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		HomeDir: home,
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Getenv:  func(string) string { return "" },
+	}
+	err := runAgentCommand(cfg, []string{
+		"install",
+		"--auto",
+		"--if-missing",
+		"--quiet",
+		"--codex-home", codexHome,
+		"--claude-home", claudeHome,
+	})
+	if err != nil {
+		t.Fatalf("agent install: %v", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want quiet", stdout.String())
+	}
+	if got := mustReadString(t, existingSkill); got != "custom skill\n" {
+		t.Fatalf("existing skill overwritten: %q", got)
+	}
+	if got := mustReadString(t, filepath.Join(codexHome, "prompts", "benchmark.md")); !strings.Contains(got, "proofswe submit") {
+		t.Fatalf("missing codex prompt: %q", got)
+	}
+	if got := mustReadString(t, filepath.Join(claudeHome, "skills", "proofswe-benchmark", "SKILL.md")); !strings.Contains(got, "proofswe submit") {
+		t.Fatalf("missing claude skill: %q", got)
+	}
+}
+
+func TestAgentInstallAutoHonorsKillSwitches(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		env        map[string]string
+		configText string
+	}{
+		{name: "proofswe-off", env: map[string]string{"PROOFSWE_OFF": "1"}},
+		{name: "do-not-track", env: map[string]string{"DO_NOT_TRACK": "1"}},
+		{name: "skip-agent-install", env: map[string]string{"PROOFSWE_SKIP_AGENT_INSTALL": "1"}},
+		{name: "config-disabled", configText: "enabled=false\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			codexHome := filepath.Join(home, "codex-home")
+			claudeHome := filepath.Join(home, "claude-home")
+			cfg := Config{
+				HomeDir: home,
+				Stdout:  &bytes.Buffer{},
+				Stderr:  &bytes.Buffer{},
+				Getenv: func(key string) string {
+					return tc.env[key]
+				},
+			}
+			if tc.configText != "" {
+				if err := os.MkdirAll(filepath.Dir(proofsweConfigPath(cfg)), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(proofsweConfigPath(cfg), []byte(tc.configText), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := runAgentCommand(cfg, []string{
+				"install",
+				"--auto",
+				"--if-missing",
+				"--quiet",
+				"--codex-home", codexHome,
+				"--claude-home", claudeHome,
+			})
+			if err != nil {
+				t.Fatalf("agent install: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(codexHome, "prompts", "benchmark.md")); !os.IsNotExist(err) {
+				t.Fatalf("codex prompt should not be written; stat err = %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(claudeHome, "skills", "proofswe-benchmark", "SKILL.md")); !os.IsNotExist(err) {
+				t.Fatalf("claude skill should not be written; stat err = %v", err)
+			}
+		})
+	}
+}
+
 func mustReadString(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
