@@ -115,7 +115,5 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golang/govulncheck-action@v1
-        with:
-          go-version-input: "1.25"
-          go-package: ./...
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
