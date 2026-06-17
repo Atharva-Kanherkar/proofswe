@@ -13,6 +13,9 @@ whether it passes a pre-written oracle.
 npx -y proofswe version
 ```
 
+The npm package bundles the Codex and Claude Code benchmark helpers during
+install, so agents can run the submission flow from inside chat.
+
 ## Submit A Session
 
 From the repository you worked in:
@@ -36,14 +39,13 @@ proofswe submit --endpoint https://your-api.example/v1/submissions
 
 ## Agent Helpers
 
-Install optional chat helpers for Codex and Claude Code:
+After install, ask your coding agent to use `/benchmark` or the
+`proofswe-benchmark` helper from inside the session. To repair or reinstall the
+helpers manually:
 
 ```sh
-npx -y proofswe agent install
+proofswe agent install
 ```
-
-Then ask the agent to use the `proofswe-benchmark` helper from inside the coding
-session.
 
 ## Self-Host The API
 

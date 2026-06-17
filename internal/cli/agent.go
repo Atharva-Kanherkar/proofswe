@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func runAgentCommand(cfg Config, args []string) error {
@@ -24,8 +25,12 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 	flags := flag.NewFlagSet("agent install", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var codexHome, claudeHome string
+	var ifMissing, quiet, auto bool
 	flags.StringVar(&codexHome, "codex-home", "", "Codex home directory (default: CODEX_HOME or ~/.codex)")
 	flags.StringVar(&claudeHome, "claude-home", "", "Claude Code home directory (default: ~/.claude)")
+	flags.BoolVar(&ifMissing, "if-missing", false, "only write missing agent assets")
+	flags.BoolVar(&quiet, "quiet", false, "suppress install summary")
+	flags.BoolVar(&auto, "auto", false, "best-effort install from package lifecycle")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
@@ -33,6 +38,15 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 		return fmt.Errorf("%w: agent install does not accept positional arguments", ErrUsage)
 	}
 	cfg = cfg.withDefaults()
+	if auto {
+		disabled, err := agentInstallDisabled(cfg)
+		if err != nil {
+			return err
+		}
+		if disabled {
+			return nil
+		}
+	}
 	if codexHome == "" {
 		codexHome = firstNonEmpty(getenvOrEmpty(cfg, "CODEX_HOME"), filepath.Join(cfg.HomeDir, ".codex"))
 	}
@@ -42,14 +56,17 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 	codexPromptPath := filepath.Join(codexHome, "prompts", "benchmark.md")
 	codexSkillPath := filepath.Join(codexHome, "skills", "proofswe-benchmark", "SKILL.md")
 	claudeSkillPath := filepath.Join(claudeHome, "skills", "proofswe-benchmark", "SKILL.md")
-	if err := writeAgentAsset(codexPromptPath, codexBenchmarkPrompt); err != nil {
+	if err := writeAgentAsset(codexPromptPath, codexBenchmarkPrompt, ifMissing); err != nil {
 		return err
 	}
-	if err := writeAgentAsset(codexSkillPath, proofsweBenchmarkSkill); err != nil {
+	if err := writeAgentAsset(codexSkillPath, proofsweBenchmarkSkill, ifMissing); err != nil {
 		return err
 	}
-	if err := writeAgentAsset(claudeSkillPath, claudeBenchmarkSkill); err != nil {
+	if err := writeAgentAsset(claudeSkillPath, claudeBenchmarkSkill, ifMissing); err != nil {
 		return err
+	}
+	if quiet {
+		return nil
 	}
 	_, _ = fmt.Fprintf(cfg.Stdout, "installed Codex prompt:     %s\n", codexPromptPath)
 	_, _ = fmt.Fprintf(cfg.Stdout, "installed Codex skill:      %s\n", codexSkillPath)
@@ -58,10 +75,29 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 	return nil
 }
 
-func writeAgentAsset(path, content string) error {
+func agentInstallDisabled(cfg Config) (bool, error) {
+	if cfg.Getenv("PROOFSWE_OFF") == "1" || cfg.Getenv("DO_NOT_TRACK") == "1" || cfg.Getenv("PROOFSWE_SKIP_AGENT_INSTALL") == "1" {
+		return true, nil
+	}
+	disabled, err := readEnabled(cfg)
+	if err != nil {
+		return false, fmt.Errorf("read proofswe config: %w", err)
+	}
+	return !disabled, nil
+}
+
+func writeAgentAsset(path, content string, ifMissing bool) error {
+	if ifMissing {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
+	content = strings.TrimRight(content, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
