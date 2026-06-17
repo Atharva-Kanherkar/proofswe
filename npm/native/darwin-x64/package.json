@@ -1,5 +1,5 @@
 {
-  "name": "@proofswe/darwin-x64",
+  "name": "proofswe-darwin-x64",
   "version": "0.0.0-development",
   "description": "Native proofswe binary for macOS x64.",
   "license": "MIT",

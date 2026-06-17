@@ -73,7 +73,7 @@ function findNativeBinary(platform, arch, suffix) {
 const rootPackage = readJSON("package.json");
 rootPackage.version = version;
 for (const [platform, arch] of platforms) {
-  rootPackage.optionalDependencies[`@proofswe/${platform}-${arch}`] = version;
+  rootPackage.optionalDependencies[`proofswe-${platform}-${arch}`] = version;
 }
 writeJSON("package.json", rootPackage);
 

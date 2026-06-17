@@ -19,7 +19,7 @@ function packageName() {
   if (!supported.has(key)) {
     throw new Error(`unsupported platform ${platform}/${arch}`);
   }
-  return `@proofswe/${platform}-${arch}`;
+  return `proofswe-${platform}-${arch}`;
 }
 
 function devOverridesEnabled() {
@@ -49,8 +49,7 @@ function binaryPath() {
   const suffix = platform === "win32" ? ".exe" : "";
   const pkg = packageName();
   if (devOverridesEnabled() && process.env.PROOFSWE_PACKAGE_ROOT) {
-    const scoped = pkg.split("/");
-    const candidate = path.join(process.env.PROOFSWE_PACKAGE_ROOT, "node_modules", scoped[0], scoped[1], "bin", `proofswe${suffix}`);
+    const candidate = path.join(process.env.PROOFSWE_PACKAGE_ROOT, "node_modules", pkg, "bin", `proofswe${suffix}`);
     if (fs.existsSync(candidate)) {
       return candidate;
     }

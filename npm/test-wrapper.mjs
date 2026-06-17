@@ -16,7 +16,7 @@ const platforms = [
 
 for (const [platform, arch] of platforms) {
   const suffix = platform === "win32" ? ".exe" : "";
-  const binDir = join(root, "node_modules", "@proofswe", `${platform}-${arch}`, "bin");
+  const binDir = join(root, "node_modules", `proofswe-${platform}-${arch}`, "bin");
   mkdirSync(binDir, { recursive: true });
   const bin = join(binDir, `proofswe${suffix}`);
   writeFileSync(bin, "#!/bin/sh\necho 'proofswe test-native'\n");
