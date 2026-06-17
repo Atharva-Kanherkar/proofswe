@@ -95,13 +95,16 @@ OpenAI or Anthropic key; the official judge runs on the proofswe server. Use
 `proofswe submit <path>` for an explicit transcript, `--no-wait` for automation,
 and `PROOFSWE_API_URL` or `--endpoint` to point at a staging server.
 
-Install the Codex prompt/skill so an agent can run the benchmark from chat:
+The npm package also installs agent chat helpers automatically:
+
+- Codex: `/prompts:benchmark` plus `$proofswe-benchmark`
+- Claude Code: `/benchmark`
+
+If npm lifecycle scripts were disabled, install them manually:
 
 ```sh
 proofswe agent install
 ```
-
-Then use `/prompts:benchmark` or mention `$proofswe-benchmark` inside Codex.
 
 Run the staging judge endpoint with server-side credentials:
 

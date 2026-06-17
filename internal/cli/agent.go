@@ -23,8 +23,9 @@ func runAgentCommand(cfg Config, args []string) error {
 func runAgentInstallCommand(cfg Config, args []string) error {
 	flags := flag.NewFlagSet("agent install", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var codexHome string
+	var codexHome, claudeHome string
 	flags.StringVar(&codexHome, "codex-home", "", "Codex home directory (default: CODEX_HOME or ~/.codex)")
+	flags.StringVar(&claudeHome, "claude-home", "", "Claude Code home directory (default: ~/.claude)")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
@@ -35,17 +36,25 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 	if codexHome == "" {
 		codexHome = firstNonEmpty(getenvOrEmpty(cfg, "CODEX_HOME"), filepath.Join(cfg.HomeDir, ".codex"))
 	}
-	promptPath := filepath.Join(codexHome, "prompts", "benchmark.md")
-	skillPath := filepath.Join(codexHome, "skills", "proofswe-benchmark", "SKILL.md")
-	if err := writeAgentAsset(promptPath, codexBenchmarkPrompt); err != nil {
+	if claudeHome == "" {
+		claudeHome = firstNonEmpty(getenvOrEmpty(cfg, "PROOFSWE_CLAUDE_HOME"), filepath.Join(cfg.HomeDir, ".claude"))
+	}
+	codexPromptPath := filepath.Join(codexHome, "prompts", "benchmark.md")
+	codexSkillPath := filepath.Join(codexHome, "skills", "proofswe-benchmark", "SKILL.md")
+	claudeSkillPath := filepath.Join(claudeHome, "skills", "benchmark", "SKILL.md")
+	if err := writeAgentAsset(codexPromptPath, codexBenchmarkPrompt); err != nil {
 		return err
 	}
-	if err := writeAgentAsset(skillPath, proofsweBenchmarkSkill); err != nil {
+	if err := writeAgentAsset(codexSkillPath, proofsweBenchmarkSkill); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(cfg.Stdout, "installed Codex prompt: %s\n", promptPath)
-	_, _ = fmt.Fprintf(cfg.Stdout, "installed Codex skill:  %s\n", skillPath)
-	_, _ = fmt.Fprintln(cfg.Stdout, "\nUse /prompts:benchmark or mention $proofswe-benchmark inside Codex.")
+	if err := writeAgentAsset(claudeSkillPath, claudeBenchmarkSkill); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(cfg.Stdout, "installed Codex prompt:     %s\n", codexPromptPath)
+	_, _ = fmt.Fprintf(cfg.Stdout, "installed Codex skill:      %s\n", codexSkillPath)
+	_, _ = fmt.Fprintf(cfg.Stdout, "installed Claude Code skill: %s\n", claudeSkillPath)
+	_, _ = fmt.Fprintln(cfg.Stdout, "\nUse /prompts:benchmark or mention $proofswe-benchmark inside Codex; use /benchmark inside Claude Code.")
 	return nil
 }
 
@@ -81,6 +90,24 @@ Run the benchmark from the current repository without asking the user to leave t
 1. Prefer ` + "`proofswe submit`" + ` from the repo root. It auto-detects the latest Claude Code or Codex transcript and waits for the official hosted scorecard.
 2. If ` + "`proofswe`" + ` is unavailable, use ` + "`npx -y proofswe submit`" + `.
 3. Use ` + "`proofswe submit --json`" + ` when structured output is easier to summarize.
+4. Use ` + "`--no-wait`" + ` only when the user wants to queue the submission and continue immediately.
+5. Never ask for a local judge API key for ` + "`submit`" + `; hosted submission does the official judging. Local keys are only for ` + "`proofswe score --local-judge`" + ` previews.
+6. If reproducibility checks fail, show the exact blocker. Do not use ` + "`--force`" + ` unless the user explicitly asks.
+7. Report the official score, status, submission URL, and corpus PR/path when present.
+`
+
+const claudeBenchmarkSkill = `---
+name: benchmark
+description: Run proofswe benchmarking/submission from inside Claude Code. Use when the user asks to benchmark the current Claude Code session, donate the transcript, submit to proofswe, get an official scorecard, run /benchmark, or avoid leaving Claude Code to run the CLI.
+---
+
+# Proofswe Benchmark
+
+Run the benchmark from the current repository without asking the user to leave Claude Code.
+
+1. Run ` + "`proofswe submit --harness=claudecode`" + ` from the repo root. It auto-detects the latest Claude Code transcript and waits for the official hosted scorecard.
+2. If ` + "`proofswe`" + ` is unavailable, use ` + "`npx -y proofswe submit --harness=claudecode`" + `.
+3. Use ` + "`proofswe submit --harness=claudecode --json`" + ` when structured output is easier to summarize.
 4. Use ` + "`--no-wait`" + ` only when the user wants to queue the submission and continue immediately.
 5. Never ask for a local judge API key for ` + "`submit`" + `; hosted submission does the official judging. Local keys are only for ` + "`proofswe score --local-judge`" + ` previews.
 6. If reproducibility checks fail, show the exact blocker. Do not use ` + "`--force`" + ` unless the user explicitly asks.
