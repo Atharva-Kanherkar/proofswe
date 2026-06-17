@@ -65,11 +65,6 @@ func runServeCommand(ctx context.Context, cfg Config, args []string) error {
 	}
 }
 
-func newSubmissionHandler(cfg Config, opts judgeOptions) (http.Handler, error) {
-	handler, _, err := newSubmissionHandlerWithContext(context.Background(), cfg, opts)
-	return handler, err
-}
-
 func newSubmissionHandlerWithContext(ctx context.Context, cfg Config, opts judgeOptions) (http.Handler, func(), error) {
 	j, err := newServerJudge(cfg, opts)
 	if err != nil {
