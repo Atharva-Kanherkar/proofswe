@@ -9,9 +9,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Atharva-Kanherkar/proofswe/internal/adapter/claudecode"
+	"github.com/Atharva-Kanherkar/proofswe/internal/adapter/codex"
 	"github.com/Atharva-Kanherkar/proofswe/internal/corpus"
 )
 
@@ -78,15 +81,28 @@ func runSubmitCommand(ctx context.Context, cfg Config, args []string) error {
 	flags.BoolVar(&asJSON, "json", false, "emit the server response as JSON")
 	flags.BoolVar(&force, "force", false, "submit even if the task is not fully reproducible")
 	flags.BoolVar(&wait, "wait", true, "poll until the server scorecard is ready")
+	flags.BoolFunc("no-wait", "submit and return immediately without polling", func(string) error {
+		wait = false
+		return nil
+	})
 	flags.DurationVar(&waitTimeout, "wait-timeout", 2*time.Minute, "maximum time to wait for a server scorecard")
 	flags.DurationVar(&pollInterval, "poll-interval", 2*time.Second, "delay between submission status polls")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
-	if flags.NArg() != 1 {
-		return fmt.Errorf("%w: submit requires exactly one transcript path", ErrUsage)
+	if flags.NArg() > 1 {
+		return fmt.Errorf("%w: submit accepts at most one transcript path", ErrUsage)
 	}
-	path := flags.Arg(0)
+	var path string
+	if flags.NArg() == 1 {
+		path = flags.Arg(0)
+	} else {
+		var err error
+		path, harness, err = latestSubmitTranscript(cfg, harness)
+		if err != nil {
+			return err
+		}
+	}
 
 	if harness == "" {
 		harness = detectHarness(path)
@@ -145,6 +161,59 @@ func buildSubmitTask(ctx context.Context, cfg Config, harness, path, handle stri
 	_, landed, _ := successFactsFromExtracted(extracted)
 	taskID := contributionTaskID(captured)
 	return corpus.FromCapture(captured, extracted, landed, &result, taskID, strings.TrimSpace(handle), time.Now()), nil
+}
+
+type submitTranscriptCandidate struct {
+	path    string
+	harness string
+	modTime time.Time
+}
+
+func latestSubmitTranscript(cfg Config, harness string) (string, string, error) {
+	cfg = cfg.withDefaults()
+	var candidates []submitTranscriptCandidate
+	if harness == "" || harness == "claudecode" {
+		root := filepath.Join(cfg.HomeDir, ".claude")
+		transcripts, err := claudecode.Discover(root)
+		if err == nil {
+			for _, transcript := range transcripts {
+				candidates = append(candidates, submitCandidate("claudecode", transcript.Path))
+			}
+		}
+	}
+	if harness == "" || harness == "codex" {
+		root := firstNonEmpty(getenvOrEmpty(cfg, "CODEX_HOME"), filepath.Join(cfg.HomeDir, ".codex"))
+		transcripts, err := codex.Discover(root)
+		if err == nil {
+			for _, transcript := range transcripts {
+				candidates = append(candidates, submitCandidate("codex", transcript.Path))
+			}
+		}
+	}
+	var latest submitTranscriptCandidate
+	for _, candidate := range candidates {
+		if candidate.path == "" {
+			continue
+		}
+		if latest.path == "" || candidate.modTime.After(latest.modTime) || candidate.modTime.Equal(latest.modTime) && candidate.path > latest.path {
+			latest = candidate
+		}
+	}
+	if latest.path == "" {
+		if harness != "" {
+			return "", "", fmt.Errorf("no %s transcript found; pass a transcript path explicitly", harness)
+		}
+		return "", "", fmt.Errorf("no supported Claude Code or Codex transcript found; pass a transcript path explicitly")
+	}
+	return latest.path, latest.harness, nil
+}
+
+func submitCandidate(harness, path string) submitTranscriptCandidate {
+	info, err := os.Stat(path)
+	if err != nil {
+		return submitTranscriptCandidate{}
+	}
+	return submitTranscriptCandidate{path: path, harness: harness, modTime: info.ModTime()}
 }
 
 func submitEndpoint(cfg Config, flagValue string) string {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,6 +76,90 @@ func TestSubmitCommand_PostsTaskAndPrintsScorecard(t *testing.T) {
 	}
 	if sawTask.TaskID == "" || len(sawTask.Prompts) == 0 || sawTask.Code.Patch == "" {
 		t.Fatalf("server did not receive a complete task: %+v", sawTask)
+	}
+}
+
+func TestSubmitCommand_NoPathAutoDetectsLatestTranscript(t *testing.T) {
+	repo, transcript := reproducibleSubmitFixture(t)
+	home := t.TempDir()
+	older := filepath.Join(home, ".claude", "projects", "-tmp-old", "old.jsonl")
+	newer := filepath.Join(home, ".claude", "projects", "-tmp-repo", "new.jsonl")
+	if err := os.MkdirAll(filepath.Dir(older), 0o755); err != nil {
+		t.Fatalf("mkdir older: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(newer), 0o755); err != nil {
+		t.Fatalf("mkdir newer: %v", err)
+	}
+	mustWrite(t, older, `{"type":"user","uuid":"old","sessionId":"old","timestamp":"2026-06-01T00:00:00Z","message":{"role":"user","content":"older"}}`+"\n")
+	data, err := os.ReadFile(transcript)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	mustWrite(t, newer, string(data))
+	oldTime := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	newTime := oldTime.Add(time.Hour)
+	if err := os.Chtimes(older, oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes older: %v", err)
+	}
+	if err := os.Chtimes(newer, newTime, newTime); err != nil {
+		t.Fatalf("chtimes newer: %v", err)
+	}
+
+	var sawTask corpus.Task
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got submitRequest
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		sawTask = got.Task
+		_, _ = io.WriteString(w, `{"submission_id":"sub_auto","status":"judged","scorecard":{"composite":75}}`)
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	cfg := submitTestConfig(t, repo, &stdout, io.Discard)
+	cfg.HomeDir = home
+	if err := runSubmitCommand(t.Context(), cfg, []string{"--endpoint", server.URL}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if len(sawTask.Prompts) == 0 || sawTask.Prompts[0].Text != "add a feature to keep.txt" {
+		t.Fatalf("auto-detected wrong transcript task: %+v", sawTask.Prompts)
+	}
+	if !strings.Contains(stdout.String(), "official score: 75 / 100") {
+		t.Fatalf("stdout = %s", stdout.String())
+	}
+}
+
+func TestSubmitCommand_NoWaitReturnsQueuedResponse(t *testing.T) {
+	repo, transcript := reproducibleSubmitFixture(t)
+	var getCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			getCalls++
+			_, _ = io.WriteString(w, `{"submission_id":"sub_wait","status":"judged","scorecard":{"composite":99}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"submission_id":"sub_wait","status":"queued","url":"/v1/submissions/sub_wait"}`)
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	cfg := submitTestConfig(t, repo, &stdout, io.Discard)
+	if err := runSubmitCommand(t.Context(), cfg, []string{"--no-wait", "--endpoint", server.URL, transcript}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if getCalls != 0 {
+		t.Fatalf("--no-wait made %d poll requests", getCalls)
+	}
+	if !strings.Contains(stdout.String(), "official score pending") {
+		t.Fatalf("stdout = %s", stdout.String())
+	}
+}
+
+func TestSubmitCommand_RejectsTooManyPaths(t *testing.T) {
+	err := runSubmitCommand(t.Context(), submitTestConfig(t, t.TempDir(), io.Discard, io.Discard), []string{"one.jsonl", "two.jsonl"})
+	if err == nil || !strings.Contains(err.Error(), "at most one") {
+		t.Fatalf("error = %v, want at most one path", err)
 	}
 }
 
