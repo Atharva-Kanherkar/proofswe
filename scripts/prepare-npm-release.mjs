@@ -41,6 +41,10 @@ function goReleaserPlatform(platform) {
   return platform === "win32" ? "windows" : platform;
 }
 
+function packagePlatform(platform) {
+  return platform === "win32" ? "windows" : platform;
+}
+
 function archAliases(arch) {
   if (arch === "x64") {
     return ["amd64", "x86_64", "x64"];
@@ -73,7 +77,7 @@ function findNativeBinary(platform, arch, suffix) {
 const rootPackage = readJSON("package.json");
 rootPackage.version = version;
 for (const [platform, arch] of platforms) {
-  rootPackage.optionalDependencies[`proofswe-${platform}-${arch}`] = version;
+  rootPackage.optionalDependencies[`proofswe-${packagePlatform(platform)}-${arch}`] = version;
 }
 writeJSON("package.json", rootPackage);
 

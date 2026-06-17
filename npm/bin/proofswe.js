@@ -19,7 +19,7 @@ function packageName() {
   if (!supported.has(key)) {
     throw new Error(`unsupported platform ${platform}/${arch}`);
   }
-  return `proofswe-${platform}-${arch}`;
+  return `proofswe-${packagePlatform(platform)}-${arch}`;
 }
 
 function devOverridesEnabled() {
@@ -38,6 +38,10 @@ function currentArch() {
     return process.env.PROOFSWE_TEST_ARCH;
   }
   return process.arch;
+}
+
+function packagePlatform(platform) {
+  return platform === "win32" ? "windows" : platform;
 }
 
 function binaryPath() {

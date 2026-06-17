@@ -1,5 +1,5 @@
 {
-  "name": "proofswe-win32-x64",
+  "name": "proofswe-windows-x64",
   "version": "0.0.0-development",
   "description": "Native proofswe binary for Windows x64.",
   "license": "MIT",

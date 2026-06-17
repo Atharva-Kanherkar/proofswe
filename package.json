@@ -20,8 +20,8 @@
     "proofswe-darwin-x64": "0.0.0-development",
     "proofswe-linux-arm64": "0.0.0-development",
     "proofswe-linux-x64": "0.0.0-development",
-    "proofswe-win32-arm64": "0.0.0-development",
-    "proofswe-win32-x64": "0.0.0-development"
+    "proofswe-windows-arm64": "0.0.0-development",
+    "proofswe-windows-x64": "0.0.0-development"
   },
   "engines": {
     "node": ">=18"
