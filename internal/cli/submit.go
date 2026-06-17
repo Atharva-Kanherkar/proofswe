@@ -55,10 +55,11 @@ type submitJudge struct {
 }
 
 type submitScorecard struct {
-	Composite float64      `json:"composite"`
-	Utility   any          `json:"utility,omitempty"`
-	Axes      []submitAxis `json:"axes,omitempty"`
-	Note      string       `json:"note,omitempty"`
+	Composite    float64      `json:"composite"`
+	ScoreVersion string       `json:"score_version,omitempty"`
+	Utility      any          `json:"utility,omitempty"`
+	Axes         []submitAxis `json:"axes,omitempty"`
+	Note         string       `json:"note,omitempty"`
 }
 
 type submitAxis struct {

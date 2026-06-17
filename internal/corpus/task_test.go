@@ -47,7 +47,8 @@ func TestFromCaptureMapsReproducibleFields(t *testing.T) {
 		Scope:            score.ScopeSignals{FilesTouched: 1},
 	}
 	card := &score.Result{
-		Composite: 71,
+		Composite:    71,
+		ScoreVersion: score.ScoreVersion,
 		Axes: []score.Axis{
 			{Name: "efficiency", Present: true, Score: 60},
 			{Name: "success", Present: false, Score: 0}, // not present → dropped
@@ -81,6 +82,9 @@ func TestFromCaptureMapsReproducibleFields(t *testing.T) {
 	}
 	if task.Scorecard == nil || task.Scorecard.Composite != 71 {
 		t.Fatalf("scorecard missing: %+v", task.Scorecard)
+	}
+	if task.Scorecard.ScoreVersion != score.ScoreVersion {
+		t.Fatalf("score_version = %q, want %q", task.Scorecard.ScoreVersion, score.ScoreVersion)
 	}
 	if len(task.Scorecard.Axes) != 1 || task.Scorecard.Axes[0].Name != "efficiency" {
 		t.Errorf("non-present axes should be dropped: %+v", task.Scorecard.Axes)

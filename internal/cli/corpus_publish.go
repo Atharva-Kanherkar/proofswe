@@ -96,7 +96,7 @@ func taskWithOfficialScorecard(task corpus.Task, card *submitScorecard) corpus.T
 	if card == nil {
 		return task
 	}
-	task.Scorecard = &corpus.Scorecard{Composite: card.Composite, Note: card.Note}
+	task.Scorecard = &corpus.Scorecard{Composite: card.Composite, ScoreVersion: card.ScoreVersion, Note: card.Note}
 	for _, axis := range card.Axes {
 		task.Scorecard.Axes = append(task.Scorecard.Axes, corpus.Axis{Name: axis.Name, Score: axis.Score})
 	}

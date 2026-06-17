@@ -265,7 +265,7 @@ func taskJudgeTurns(task corpus.Task) []judge.Turn {
 }
 
 func scorecardForSubmit(r score.Result) *submitScorecard {
-	card := &submitScorecard{Composite: r.Composite, Utility: r.Utility, Note: r.Note}
+	card := &submitScorecard{Composite: r.Composite, ScoreVersion: r.ScoreVersion, Utility: r.Utility, Note: r.Note}
 	for _, axis := range r.Axes {
 		if axis.Present {
 			card.Axes = append(card.Axes, submitAxis{Name: axis.Name, Present: axis.Present, Score: axis.Score, Detail: axis.Detail})

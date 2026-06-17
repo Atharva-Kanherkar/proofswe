@@ -112,9 +112,10 @@ type Outcome struct {
 // Scorecard is the optional execution score (deterministic axes, plus the judge
 // axis when --judge ran). Provisional; consumers may re-score from the data.
 type Scorecard struct {
-	Composite float64 `json:"composite"`
-	Axes      []Axis  `json:"axes"`
-	Note      string  `json:"note,omitempty"`
+	Composite    float64 `json:"composite"`
+	ScoreVersion string  `json:"score_version,omitempty"`
+	Axes         []Axis  `json:"axes"`
+	Note         string  `json:"note,omitempty"`
 }
 
 // Axis is one scored dimension.
@@ -218,7 +219,7 @@ func codeFrom(c core.TaskCode) Code {
 }
 
 func scorecardFrom(r score.Result) *Scorecard {
-	card := &Scorecard{Composite: r.Composite, Note: r.Note}
+	card := &Scorecard{Composite: r.Composite, ScoreVersion: r.ScoreVersion, Note: r.Note}
 	for _, a := range r.Axes {
 		if a.Present {
 			card.Axes = append(card.Axes, Axis{Name: a.Name, Score: a.Score})
