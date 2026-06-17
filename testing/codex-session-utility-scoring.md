@@ -18,7 +18,13 @@
 - Existing execution axes should remain available as evidence/profile axes.
 - JSON output should expose the new headline score and utility details without breaking access to existing axes/signals.
 - Text and HTML output should label the headline as session utility rather than execution score.
-- `proofswe score --judge` should allow choosing the judge provider/model:
+- Default local scoring should not require any API key.
+- Default local scoring should clearly report:
+  - `score_kind=local_deterministic`
+  - `judge_status=not_run`
+  - `official_score_requires=server_judged_submission`
+- Local judging should be framed as preview/debug only, never the official benchmark score.
+- `proofswe score --local-judge` and `proofswe score --judge-mode=local` should allow choosing the preview judge provider/model:
   - `--judge-provider=openai|anthropic|auto`
   - `--judge-model=<model>`
   - env fallbacks via `PROOFSWE_JUDGE_PROVIDER` and `PROOFSWE_JUDGE_MODEL`
@@ -33,8 +39,9 @@
 - `internal/score.TestScore_JudgeIsBoundedNudge` - judge success cannot move utility beyond the configured nudge cap.
 - `internal/score.TestScore_UtilityUsesSigmoidShape` - stronger evidence monotonically increases the sigmoid utility score.
 - `internal/cli.TestScoreCommand_Fixture` - JSON output contains the new `utility` block and valid score.
-- `internal/cli.TestScoreCommand_TextOutput` - text output includes `session utility`.
-- `internal/cli.TestScoreCommand_Judge` - judge affects the utility score through the bounded nudge path.
+- `internal/cli.TestScoreCommand_Fixture` - default JSON output reports deterministic local score with judge not run.
+- `internal/cli.TestScoreCommand_TextOutput` - text output includes `session utility` and official server-judge pending status.
+- `internal/cli.TestScoreCommand_LocalJudge` - local preview judge affects the utility score through the bounded nudge path.
 - `internal/cli.TestScoreCommand_JudgeOptions` - provider/model flags are passed into judge construction.
 - `internal/judge.TestOpenAIJudge_Assess` - OpenAI Responses API shape is sent and parsed.
 - `internal/judge.TestAnthropicJudge_Assess` - Anthropic path remains supported.
