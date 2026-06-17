@@ -21,7 +21,7 @@ import (
 // runContributeCommand turns a captured session into a reproducible corpus task
 // and writes a publishable task.json.
 //
-//	proofswe contribute <transcript.jsonl> [--harness=…] [--judge]
+//	proofswe contribute <transcript.jsonl> [--harness=…]
 //	    [--as=@handle] [--out=task.json] [--print] [--force]
 //
 // Reproducibility requires a public remote, a base commit, and a permissive
@@ -34,9 +34,8 @@ func runContributeCommand(cfg Config, args []string) error {
 	flags := flag.NewFlagSet("contribute", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var harness, outPath, handle string
-	var useJudge, printJSON, force bool
+	var printJSON, force bool
 	flags.StringVar(&harness, "harness", "", "claudecode|codex (auto-detected if empty)")
-	flags.BoolVar(&useJudge, "judge", false, "include a judged success axis in the scorecard (needs ANTHROPIC_API_KEY)")
 	flags.StringVar(&handle, "as", "", "optional attribution, e.g. @you (omit to stay anonymous)")
 	flags.StringVar(&outPath, "out", "", "write the task.json here (default: ./<task-id>.json)")
 	flags.BoolVar(&printJSON, "print", false, "print the task.json to stdout instead of writing a file")
@@ -62,7 +61,7 @@ func runContributeCommand(cfg Config, args []string) error {
 		return err
 	}
 
-	result, _, err := scoreTranscript(cfg, harness, path, useJudge)
+	result, _, _, err := scoreTranscript(cfg, harness, path, false, judgeOptions{})
 	if err != nil {
 		return err
 	}

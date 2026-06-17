@@ -20,18 +20,53 @@ import (
 	"github.com/Atharva-Kanherkar/proofswe/internal/score"
 )
 
-// newScoreJudge builds the judge used by `score --judge`. It is a package var so
-// tests can swap in a judge.FakeJudge and run offline.
-var newScoreJudge = func(cfg Config) (judge.Judge, error) {
+type judgeOptions struct {
+	Provider string
+	Model    string
+}
+
+type scoreMetadata struct {
+	ScoreKind             string `json:"score_kind"`
+	JudgeStatus           string `json:"judge_status"`
+	OfficialScoreRequires string `json:"official_score_requires"`
+}
+
+// newScoreJudge builds the preview judge used by `score --local-judge`. It is a
+// package var so tests can swap in a judge.FakeJudge and run offline.
+var newScoreJudge = func(cfg Config, opts judgeOptions) (judge.Judge, error) {
 	getenv := cfg.Getenv
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	key := getenv("ANTHROPIC_API_KEY")
-	if key == "" {
-		return nil, fmt.Errorf("set ANTHROPIC_API_KEY to use --judge")
+	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(opts.Provider, getenv("PROOFSWE_JUDGE_PROVIDER"), "auto")))
+	model := firstNonEmpty(opts.Model, getenv("PROOFSWE_JUDGE_MODEL"))
+	switch provider {
+	case "auto":
+		if getenv("OPENAI_API_KEY") != "" {
+			provider = "openai"
+		} else {
+			provider = "anthropic"
+		}
+	case "openai", "anthropic":
+	default:
+		return nil, fmt.Errorf("%w: unknown judge provider %q", ErrUsage, provider)
 	}
-	return judge.HTTPJudge{APIKey: key, Model: getenv("ANTHROPIC_MODEL"), BaseURL: getenv("ANTHROPIC_BASE_URL")}, nil
+	switch provider {
+	case "openai":
+		key := getenv("OPENAI_API_KEY")
+		if key == "" {
+			return nil, fmt.Errorf("set OPENAI_API_KEY to use --judge-provider=openai")
+		}
+		return judge.OpenAIJudge{APIKey: key, Model: firstNonEmpty(model, getenv("OPENAI_MODEL")), BaseURL: getenv("OPENAI_BASE_URL")}, nil
+	case "anthropic":
+		key := getenv("ANTHROPIC_API_KEY")
+		if key == "" {
+			return nil, fmt.Errorf("set ANTHROPIC_API_KEY to use --judge-provider=anthropic")
+		}
+		return judge.AnthropicJudge{APIKey: key, Model: firstNonEmpty(model, getenv("ANTHROPIC_MODEL")), BaseURL: getenv("ANTHROPIC_BASE_URL")}, nil
+	default:
+		panic("unreachable judge provider")
+	}
 }
 
 // runScoreCommand scores a single captured transcript and prints a scorecard.
@@ -41,11 +76,16 @@ func runScoreCommand(cfg Config, args []string) error {
 	flags := flag.NewFlagSet("score", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var harness, htmlPath string
-	var asJSON, useJudge bool
+	var asJSON, localJudge, legacyJudge bool
+	var judgeProvider, judgeModel, judgeMode string
 	flags.StringVar(&harness, "harness", "", "claudecode|codex (auto-detected if empty)")
 	flags.BoolVar(&asJSON, "json", false, "emit the scorecard as JSON")
 	flags.StringVar(&htmlPath, "html", "", "also write an HTML scorecard to this path")
-	flags.BoolVar(&useJudge, "judge", false, "score the quality/success axis with the behavioral judge (needs ANTHROPIC_API_KEY)")
+	flags.BoolVar(&localJudge, "local-judge", false, "run a local preview judge (not official benchmark scoring)")
+	flags.BoolVar(&legacyJudge, "judge", false, "deprecated alias for --local-judge")
+	flags.StringVar(&judgeMode, "judge-mode", "", "judge mode: local|none")
+	flags.StringVar(&judgeProvider, "judge-provider", "", "judge provider: auto|openai|anthropic")
+	flags.StringVar(&judgeModel, "judge-model", "", "judge model override")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
@@ -60,26 +100,48 @@ func runScoreCommand(cfg Config, args []string) error {
 	if harness != "claudecode" && harness != "codex" {
 		return fmt.Errorf("%w: unknown harness %q", ErrUsage, harness)
 	}
+	useLocalJudge, err := resolveLocalJudge(localJudge, legacyJudge, judgeMode, judgeProvider, judgeModel)
+	if err != nil {
+		return err
+	}
 
-	result, sig, err := scoreTranscript(cfg, harness, path, useJudge)
+	result, sig, meta, err := scoreTranscript(cfg, harness, path, useLocalJudge, judgeOptions{Provider: judgeProvider, Model: judgeModel})
 	if err != nil {
 		return err
 	}
 
 	if htmlPath != "" {
-		if err := os.WriteFile(htmlPath, []byte(renderScoreHTML(result)), 0o644); err != nil {
+		if err := os.WriteFile(htmlPath, []byte(renderScoreHTML(result, meta)), 0o644); err != nil {
 			return fmt.Errorf("write html: %w", err)
 		}
 		_, _ = fmt.Fprintf(cfg.Stdout, "wrote %s\n", htmlPath)
 	}
 	if asJSON {
-		return writeScoreJSON(cfg.Stdout, result, sig)
+		return writeScoreJSON(cfg.Stdout, result, sig, meta)
 	}
-	writeScoreText(cfg.Stdout, result)
+	writeScoreText(cfg.Stdout, result, meta)
 	if sig.Extracted != nil && sig.Extracted.SkillAssisted {
 		_, _ = fmt.Fprintf(cfg.Stdout, "  ⚠ skill-assisted: %s — model+skill; stratify, don't pool with unaided\n\n", strings.Join(sig.Extracted.SkillsUsed, ", "))
 	}
 	return nil
+}
+
+func resolveLocalJudge(localJudge, legacyJudge bool, judgeMode, judgeProvider, judgeModel string) (bool, error) {
+	mode := strings.ToLower(strings.TrimSpace(judgeMode))
+	switch mode {
+	case "", "none":
+	case "local":
+		localJudge = true
+	default:
+		return false, fmt.Errorf("%w: unknown --judge-mode %q", ErrUsage, judgeMode)
+	}
+	if legacyJudge {
+		localJudge = true
+	}
+	if !localJudge && (strings.TrimSpace(judgeProvider) != "" || strings.TrimSpace(judgeModel) != "") {
+		return false, fmt.Errorf("%w: --judge-provider/--judge-model require --local-judge or --judge-mode=local", ErrUsage)
+	}
+	return localJudge, nil
 }
 
 // scoreTranscript turns a transcript into a scorecard plus the raw signals it
@@ -87,15 +149,20 @@ func runScoreCommand(cfg Config, args []string) error {
 // read the same deterministic axes (and, with useJudge, the same behavioral
 // success axis). Hashes are not part of the score, so an ephemeral salt keeps
 // extraction self-contained without touching the proofswe state dir.
-func scoreTranscript(cfg Config, harness, path string, useJudge bool) (score.Result, score.Signals, error) {
+func scoreTranscript(cfg Config, harness, path string, useLocalJudge bool, opts judgeOptions) (score.Result, score.Signals, scoreMetadata, error) {
+	meta := scoreMetadata{
+		ScoreKind:             "local_deterministic",
+		JudgeStatus:           "not_run",
+		OfficialScoreRequires: "server_judged_submission",
+	}
 	events, err := parseTranscript(harness, []byte("proofswe-score"), path)
 	if err != nil {
-		return score.Result{}, score.Signals{}, fmt.Errorf("parse transcript: %w", err)
+		return score.Result{}, score.Signals{}, meta, fmt.Errorf("parse transcript: %w", err)
 	}
 
 	sig := signalsFromEvents(events)
 	if sig.ToolCalls == 0 && sig.Turns == 0 && sig.InputTokens == 0 {
-		return score.Result{}, score.Signals{}, fmt.Errorf("no scorable activity in %s (wrong harness, or empty transcript?)", path)
+		return score.Result{}, score.Signals{}, meta, fmt.Errorf("no scorable activity in %s (wrong harness, or empty transcript?)", path)
 	}
 
 	// Deterministic success signals (objective-first): tests/build/lint passed,
@@ -106,22 +173,34 @@ func scoreTranscript(cfg Config, harness, path string, useJudge bool) (score.Res
 	sig.Extracted = &extracted
 	sig.Turns = extracted.HumanTurns // friction uses human turns only — skill injections excluded
 
-	if useJudge {
-		j, err := newScoreJudge(cfg)
+	if useLocalJudge {
+		j, err := newScoreJudge(cfg, opts)
 		if err != nil {
-			return score.Result{}, score.Signals{}, err
+			return score.Result{}, score.Signals{}, meta, err
 		}
 		// The judge reads only the conversational turns, model identity stripped.
 		if v, err := j.Assess(context.Background(), transcriptTurns(harness, path), extracted.SkillsUsed); err != nil {
-			_, _ = fmt.Fprintf(cfg.Stderr, "judge: %v (success axis left pending)\n", err)
+			meta.JudgeStatus = "local_preview_failed"
+			_, _ = fmt.Fprintf(cfg.Stderr, "local judge: %v (official judge still pending server evaluation)\n", err)
 		} else {
+			meta.ScoreKind = "local_with_judge_preview"
+			meta.JudgeStatus = "local_preview"
 			s := judge.ScoreSuccess(v)
 			sig.Success = &s
 			sig.SuccessLabel = judge.Label(v)
 		}
 	}
 
-	return score.Score(sig), sig, nil
+	return score.Score(sig), sig, meta, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func signalsFromEvents(events []core.NormalizedEvent) score.Signals {
@@ -295,7 +374,7 @@ func detectHarness(path string) string {
 	return "claudecode"
 }
 
-func writeScoreText(w io.Writer, r score.Result) {
+func writeScoreText(w io.Writer, r score.Result, meta scoreMetadata) {
 	model := r.Model
 	if model == "" {
 		model = "(unknown model)"
@@ -310,8 +389,11 @@ func writeScoreText(w io.Writer, r score.Result) {
 	}
 	_, _ = fmt.Fprintf(w, "\n  session utility: %.0f / 100   confidence: %s\n", r.Utility.Score, r.Utility.Confidence)
 	if r.Utility.JudgeNudge != 0 {
-		_, _ = fmt.Fprintf(w, "  judge nudge: %+0.1f (capped)\n", r.Utility.JudgeNudge)
+		_, _ = fmt.Fprintf(w, "  local judge nudge: %+0.1f (preview, capped)\n", r.Utility.JudgeNudge)
 	}
+	_, _ = fmt.Fprintf(w, "  score kind: %s\n", meta.ScoreKind)
+	_, _ = fmt.Fprintf(w, "  judge status: %s\n", meta.JudgeStatus)
+	_, _ = fmt.Fprintf(w, "  official judge pending server evaluation\n")
 	_, _ = fmt.Fprintln(w)
 }
 
@@ -326,21 +408,24 @@ func bar(scoreVal float64) string {
 	return strings.Repeat("▇", filled) + strings.Repeat("░", 10-filled)
 }
 
-func writeScoreJSON(w io.Writer, r score.Result, s score.Signals) error {
+func writeScoreJSON(w io.Writer, r score.Result, s score.Signals, meta scoreMetadata) error {
 	out := struct {
-		Model     string        `json:"model"`
-		Composite float64       `json:"composite"`
-		Utility   score.Utility `json:"utility"`
-		Axes      []score.Axis  `json:"axes"`
-		Signals   score.Signals `json:"signals"`
-		Note      string        `json:"note"`
-	}{r.Model, r.Composite, r.Utility, r.Axes, s, r.Note}
+		Model                 string        `json:"model"`
+		Composite             float64       `json:"composite"`
+		Utility               score.Utility `json:"utility"`
+		ScoreKind             string        `json:"score_kind"`
+		JudgeStatus           string        `json:"judge_status"`
+		OfficialScoreRequires string        `json:"official_score_requires"`
+		Axes                  []score.Axis  `json:"axes"`
+		Signals               score.Signals `json:"signals"`
+		Note                  string        `json:"note"`
+	}{r.Model, r.Composite, r.Utility, meta.ScoreKind, meta.JudgeStatus, meta.OfficialScoreRequires, r.Axes, s, r.Note}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
 }
 
-func renderScoreHTML(r score.Result) string {
+func renderScoreHTML(r score.Result, meta scoreMetadata) string {
 	var b strings.Builder
 	model := r.Model
 	if model == "" {
@@ -363,5 +448,7 @@ func renderScoreHTML(r score.Result) string {
 	}
 	_, _ = fmt.Fprintf(&b, `<div class=big>%.0f<span class=muted style="font-size:16px"> / 100</span></div><p class=muted>session utility · confidence %s</p><p class=muted>%s</p>`,
 		r.Utility.Score, html.EscapeString(r.Utility.Confidence), html.EscapeString(r.Note))
+	_, _ = fmt.Fprintf(&b, `<p class=muted>score kind: %s · judge status: %s · official judge pending server evaluation</p>`,
+		html.EscapeString(meta.ScoreKind), html.EscapeString(meta.JudgeStatus))
 	return b.String()
 }

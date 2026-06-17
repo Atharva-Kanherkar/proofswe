@@ -101,9 +101,9 @@ func (f fakeDoer) Do(req *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: f.status, Body: io.NopCloser(strings.NewReader(f.body))}, nil
 }
 
-func TestHTTPJudge_Assess(t *testing.T) {
+func TestAnthropicJudge_Assess(t *testing.T) {
 	doer := fakeDoer{status: 200, body: `{"content":[{"type":"text","text":"{\"outcome\":\"accepted\",\"corrections\":0,\"sentiment\":0.7}"}]}`}
-	j := HTTPJudge{Client: doer, APIKey: "test-key"}
+	j := AnthropicJudge{Client: doer, APIKey: "test-key"}
 	v, err := j.Assess(context.Background(), []Turn{{Role: "user", Text: "hi"}}, nil)
 	if err != nil {
 		t.Fatalf("assess: %v", err)
@@ -113,9 +113,42 @@ func TestHTTPJudge_Assess(t *testing.T) {
 	}
 }
 
+type openAIFakeDoer struct {
+	status int
+	body   string
+	req    string
+}
+
+func (f *openAIFakeDoer) Do(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("authorization") != "Bearer test-key" {
+		return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	}
+	body, _ := io.ReadAll(req.Body)
+	f.req = string(body)
+	return &http.Response{StatusCode: f.status, Body: io.NopCloser(strings.NewReader(f.body))}, nil
+}
+
+func TestOpenAIJudge_Assess(t *testing.T) {
+	doer := &openAIFakeDoer{status: 200, body: `{"output":[{"content":[{"type":"output_text","text":"{\"outcome\":\"corrected\",\"corrections\":2,\"sentiment\":-0.3}"}]}]}`}
+	j := OpenAIJudge{Client: doer, APIKey: "test-key"}
+	v, err := j.Assess(context.Background(), []Turn{{Role: "user", Text: "hi"}}, nil)
+	if err != nil {
+		t.Fatalf("assess: %v", err)
+	}
+	if v.Outcome != OutcomeCorrected || v.Corrections != 2 {
+		t.Errorf("verdict = %+v, want corrected with 2 corrections", v)
+	}
+	if !strings.Contains(doer.req, `"model":"`+DefaultOpenAIModel+`"`) {
+		t.Errorf("request missing default OpenAI model %q: %s", DefaultOpenAIModel, doer.req)
+	}
+	if !strings.Contains(doer.req, `"effort":"low"`) {
+		t.Errorf("request missing low reasoning effort: %s", doer.req)
+	}
+}
+
 func TestHTTPJudge_APIError(t *testing.T) {
 	doer := fakeDoer{status: 500, body: `{"error":{"message":"boom"}}`}
-	j := HTTPJudge{Client: doer, APIKey: "test-key"}
+	j := AnthropicJudge{Client: doer, APIKey: "test-key"}
 	if _, err := j.Assess(context.Background(), nil, nil); err == nil {
 		t.Error("expected error on non-200 status")
 	}

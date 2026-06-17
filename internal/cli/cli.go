@@ -90,8 +90,8 @@ Usage:
   proofswe consent set --tier=<hashes-only|prompts|actions|code|full>
   proofswe show <session>
   proofswe inspect <session>
-  proofswe score <transcript> [--harness=claudecode|codex] [--judge] [--json] [--html out.html]
-  proofswe contribute <transcript> [--harness=…] [--judge] [--as=@handle] [--out task.json] [--print]
+  proofswe score <transcript> [--harness=claudecode|codex] [--local-judge] [--judge-mode=local|none] [--judge-provider=auto|openai|anthropic] [--judge-model=model] [--json] [--html out.html]
+  proofswe contribute <transcript> [--harness=…] [--as=@handle] [--out task.json] [--print]
   proofswe resolve [--maturity=24h]
   proofswe hook <claudecode|codex> <SessionStart|SessionEnd|Stop>
   proofswe version
