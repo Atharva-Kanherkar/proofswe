@@ -1,27 +1,18 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import "./globals.css";
 
-// Body / UI / data — technical precision
-const sans = Geist({
+const sans = IBM_Plex_Sans({
   variable: "--font-sans-stack",
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
   display: "swap",
 });
 
-// Figures / labels / readouts
-const mono = Geist_Mono({
+const mono = IBM_Plex_Mono({
   variable: "--font-mono-stack",
   subsets: ["latin"],
-  display: "swap",
-});
-
-// Display + editorial accents (incl. italic)
-const serif = Instrument_Serif({
-  variable: "--font-serif-accent",
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
+  weight: ["400", "500"],
   display: "swap",
 });
 
@@ -66,7 +57,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${sans.variable} ${mono.variable} ${serif.variable} h-full antialiased`}
+      className={`${sans.variable} ${mono.variable} h-full antialiased`}
     >
       <body className="min-h-full">{children}</body>
     </html>

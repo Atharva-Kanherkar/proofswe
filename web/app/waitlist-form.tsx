@@ -33,7 +33,7 @@ export default function WaitlistForm() {
 
   if (status === "done") {
     return (
-      <p className="font-mono text-sm tracking-wide text-[var(--fg)]">
+      <p className="font-mono text-sm text-[var(--fg)]">
         you&apos;re in.{" "}
         <span className="text-[var(--muted)]">welcome to the proof.</span>
       </p>
@@ -61,7 +61,7 @@ export default function WaitlistForm() {
         </button>
       </div>
       {status === "error" && (
-        <p className="mt-2 text-center font-mono text-xs text-[var(--accent)]">
+        <p className="mt-2 text-center font-mono text-xs text-[var(--danger)]">
           {msg}
         </p>
       )}
