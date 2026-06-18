@@ -73,7 +73,7 @@ func runSubmitCommand(ctx context.Context, cfg Config, args []string) error {
 	flags := flag.NewFlagSet("submit", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var harness, handle, endpoint, token string
-	var asJSON, force bool
+	var asJSON, force, acceptCodePublicationAgreement bool
 	var wait bool
 	var waitTimeout, pollInterval time.Duration
 	flags.StringVar(&harness, "harness", "", "claudecode|codex (auto-detected if empty)")
@@ -82,6 +82,7 @@ func runSubmitCommand(ctx context.Context, cfg Config, args []string) error {
 	flags.StringVar(&token, "token", "", "optional proofswe API token (default: PROOFSWE_API_TOKEN)")
 	flags.BoolVar(&asJSON, "json", false, "emit the server response as JSON")
 	flags.BoolVar(&force, "force", false, "submit even if the task is not fully reproducible")
+	flags.BoolVar(&acceptCodePublicationAgreement, "accept-code-publication-agreement", false, "confirm you have the right to publish captured raw code to the public corpus")
 	flags.BoolVar(&wait, "wait", true, "poll until the server scorecard is ready")
 	flags.BoolFunc("no-wait", "submit and return immediately without polling", func(string) error {
 		wait = false
@@ -115,6 +116,12 @@ func runSubmitCommand(ctx context.Context, cfg Config, args []string) error {
 
 	task, err := buildSubmitTask(ctx, cfg, harness, path, handle)
 	if err != nil {
+		return err
+	}
+	if acceptCodePublicationAgreement {
+		task.CodePublicationAgreementVersion = corpus.CodePublicationAgreementVersion
+	}
+	if err := requireCodePublicationAgreement(task); err != nil {
 		return err
 	}
 	if problems := corpus.ReproducibilityProblems(task); len(problems) > 0 {

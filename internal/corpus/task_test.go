@@ -121,11 +121,27 @@ func TestReproducibilityAllowsAnyLicenseAndPatchlessHistory(t *testing.T) {
 	}
 
 	// A historical session whose work is already committed (clean tree -> no
-	// patch) is still reproducible from remote + base commit + prompt.
+	// patch) is reproducible when the base comes from transcript-start history
+	// and the transcript shows edit evidence.
 	task := FromCapture(reproducibleCapture(), score.ExtractedSignals{}, true, nil, "id", "", time.Now())
 	task.Code = Code{}
+	task.Repo.BaseCommitSource = BaseCommitSourceTranscriptStart
+	task.Outcome.FilesTouched = 1
 	if probs := ReproducibilityProblems(task); len(probs) != 0 {
 		t.Fatalf("patchless historical task flagged: %v", probs)
+	}
+}
+
+func TestReproducibilityProblemsRejectPatchlessWithoutHistoricalProvenance(t *testing.T) {
+	task := FromCapture(reproducibleCapture(), score.ExtractedSignals{}, true, nil, "id", "", time.Now())
+	task.Code = Code{}
+	if probs := ReproducibilityProblems(task); len(probs) != 2 {
+		t.Fatalf("patchless task problems = %v, want base provenance and edit evidence", probs)
+	}
+
+	task.Repo.BaseCommitSource = BaseCommitSourceTranscriptStart
+	if probs := ReproducibilityProblems(task); len(probs) != 1 || probs[0] != "no code patch and no transcript edit evidence" {
+		t.Fatalf("patchless task with no edits problems = %v", probs)
 	}
 }
 

@@ -97,8 +97,8 @@ Usage:
   proofswe show <session>
   proofswe inspect <session>
   proofswe score <transcript> [--harness=claudecode|codex] [--local-judge] [--judge-mode=local|none] [--judge-provider=auto|openai|anthropic] [--judge-model=model] [--json] [--html out.html]
-  proofswe contribute <transcript> [--harness=…] [--as=@handle] [--out task.json] [--print]
-  proofswe submit [transcript] [--harness=…] [--as=@handle] [--endpoint URL] [--json] [--no-wait] [--force]
+  proofswe contribute <transcript> [--harness=…] [--as=@handle] [--out task.json] [--print] [--accept-code-publication-agreement]
+  proofswe submit [transcript] [--harness=…] [--as=@handle] [--endpoint URL] [--json] [--no-wait] [--force] [--accept-code-publication-agreement]
   proofswe serve [--addr=:8080] [--judge-provider=openai|anthropic] [--judge-model=model]
   proofswe resolve [--maturity=24h]
   proofswe agent install

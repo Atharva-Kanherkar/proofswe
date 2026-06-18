@@ -324,7 +324,7 @@ func TestWorkForHireRepoScope(t *testing.T) {
 	}
 	public := core.TaskRepo{RemoteURL: "https://github.com/public/repo", BaseCommit: "abc", IsPublic: true, LicenseSPDX: "MIT"}
 	if !repoAllowsRawCode(public) {
-		t.Fatal("public permissive repo rejected")
+		t.Fatal("public repo rejected")
 	}
 }
 
@@ -916,14 +916,40 @@ func assertNoTempResidue(t *testing.T, cfg Config) {
 
 func runGitForTest(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	runGitForTestEnv(t, dir, nil, args...)
+}
+
+func runGitForTestEnv(t *testing.T, dir string, extraEnv []string, args ...string) {
+	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(),
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+	cmd.Env = append(cmd.Env, extraEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
+}
+
+func gitOutputForTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func commitAllAtForTest(t *testing.T, dir, msg, ts string) {
+	t.Helper()
+	runGitForTest(t, dir, "add", ".")
+	runGitForTestEnv(t, dir, []string{"GIT_AUTHOR_DATE=" + ts, "GIT_COMMITTER_DATE=" + ts}, "commit", "-m", msg, "--date", ts)
 }
 
 var _ io.Reader

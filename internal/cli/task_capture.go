@@ -25,6 +25,7 @@ type taskTranscript struct {
 	toolOutputs       []namedText
 	tools             []string
 	model             string
+	startedAt         time.Time
 }
 
 type namedText struct {
@@ -231,6 +232,9 @@ func extractTaskTranscript(harness, path string, salt []byte) taskTranscript {
 	if events, err := parseTranscript(harness, salt, path); err == nil {
 		for _, event := range events {
 			env := eventEnvelope(event)
+			if ts := env.Event.Timestamp; !ts.IsZero() && (out.startedAt.IsZero() || ts.Before(out.startedAt)) {
+				out.startedAt = ts
+			}
 			if env.Model.ID != "" {
 				out.model = string(env.Model.ID)
 			}
@@ -405,6 +409,7 @@ func collectRepoInfo(ctx context.Context, cwd string, h hashing.Hasher) repoInfo
 	}
 	if out, err := runGitContext(ctx, root, "rev-parse", "--verify", "--quiet", "HEAD"); err == nil {
 		repo.BaseCommit = strings.TrimSpace(string(out))
+		repo.BaseCommitSource = core.BaseCommitSourceHead
 		if ts, tsErr := runGitContext(ctx, root, "show", "-s", "--format=%cI", "HEAD"); tsErr == nil {
 			repo.BaseCommitCommittedAt = strings.TrimSpace(string(ts))
 		}

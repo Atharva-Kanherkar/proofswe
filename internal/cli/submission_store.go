@@ -103,6 +103,9 @@ func validateSubmittedTask(task corpus.Task) error {
 	if problems := corpus.ReproducibilityProblems(task); len(problems) > 0 {
 		return fmt.Errorf("not a reproducible corpus task: %v", problems)
 	}
+	if corpus.RequiresCodePublicationAgreement(task) && !corpus.HasCodePublicationAgreement(task) {
+		return fmt.Errorf("code publication agreement required for raw code from license %q", task.Repo.LicenseSPDX)
+	}
 	return nil
 }
 
