@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/core"
+	"github.com/Atharva-Kanherkar/proofswe/internal/corpus"
 	"github.com/Atharva-Kanherkar/proofswe/internal/hashing"
 )
 
@@ -39,12 +40,13 @@ type consentResolution struct {
 }
 
 type consentRecord struct {
-	SchemaVersion int            `json:"schema_version"`
-	PolicyVersion string         `json:"policy_version"`
-	InstallID     string         `json:"install_id"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	Grants        []consentGrant `json:"grants,omitempty"`
-	Declines      []consentGrant `json:"declines,omitempty"`
+	SchemaVersion                   int            `json:"schema_version"`
+	PolicyVersion                   string         `json:"policy_version"`
+	InstallID                       string         `json:"install_id"`
+	UpdatedAt                       time.Time      `json:"updated_at"`
+	CodePublicationAgreementVersion string         `json:"code_publication_agreement_version,omitempty"`
+	Grants                          []consentGrant `json:"grants,omitempty"`
+	Declines                        []consentGrant `json:"declines,omitempty"`
 }
 
 type consentGrant struct {
@@ -187,7 +189,11 @@ func printConsentState(cfg Config) error {
 		categories = append(categories, string(category))
 	}
 	sort.Strings(categories)
-	_, err = fmt.Fprintf(cfg.Stdout, "tier: %s\nmax_grant: %s\ncategories: %s\ndeclined: %t\n", resolved.Tier, resolved.MaxGrant, strings.Join(categories, ","), resolved.Config.Declined)
+	accepted, err := codePublicationAgreementAccepted(cfg)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(cfg.Stdout, "tier: %s\nmax_grant: %s\ncategories: %s\ndeclined: %t\ncode_publication_agreement: %t\n", resolved.Tier, resolved.MaxGrant, strings.Join(categories, ","), resolved.Config.Declined, accepted)
 	return err
 }
 
@@ -348,29 +354,7 @@ func readConsentRecord(cfg Config) (consentRecord, error) {
 }
 
 func appendConsentGrant(cfg Config, tier core.ConsentTier, repoHash string, declined bool) error {
-	record, err := readConsentRecord(cfg)
-	if errors.Is(err, os.ErrNotExist) {
-		record = consentRecord{
-			SchemaVersion: consentSchemaVersion,
-			PolicyVersion: consentPolicyVersion,
-			InstallID:     "local-" + fmt.Sprint(time.Now().UTC().UnixNano()),
-		}
-	} else if err != nil {
-		record = consentRecord{
-			SchemaVersion: consentSchemaVersion,
-			PolicyVersion: consentPolicyVersion,
-			InstallID:     "local-" + fmt.Sprint(time.Now().UTC().UnixNano()),
-		}
-	}
-	if record.SchemaVersion == 0 {
-		record.SchemaVersion = consentSchemaVersion
-	}
-	if record.PolicyVersion == "" {
-		record.PolicyVersion = consentPolicyVersion
-	}
-	if record.InstallID == "" {
-		record.InstallID = "local-" + fmt.Sprint(time.Now().UTC().UnixNano())
-	}
+	record := loadConsentRecordForWrite(cfg)
 	now := time.Now().UTC()
 	record.UpdatedAt = now
 	grant := consentGrant{Timestamp: now, Tier: tier, RepoHash: repoHash}
@@ -385,6 +369,53 @@ func appendConsentGrant(cfg Config, tier core.ConsentTier, repoHash string, decl
 	}
 	data = append(data, '\n')
 	return writeConsentRecordAtomic(consentRecordPath(cfg), data, 0o600)
+}
+
+func codePublicationAgreementAccepted(cfg Config) (bool, error) {
+	if cfg.Getenv == nil {
+		cfg.Getenv = os.Getenv
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.Getenv("PROOFSWE_ACCEPT_CODE_PUBLICATION_AGREEMENT"))) {
+	case "1", "true", "yes", "on":
+		return true, nil
+	}
+	record, err := readConsentRecord(cfg)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return record.CodePublicationAgreementVersion == corpus.CodePublicationAgreementVersion, nil
+}
+
+func acceptCodePublicationAgreement(cfg Config) error {
+	record := loadConsentRecordForWrite(cfg)
+	record.UpdatedAt = time.Now().UTC()
+	record.CodePublicationAgreementVersion = corpus.CodePublicationAgreementVersion
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return writeConsentRecordAtomic(consentRecordPath(cfg), data, 0o600)
+}
+
+func loadConsentRecordForWrite(cfg Config) consentRecord {
+	record, err := readConsentRecord(cfg)
+	if errors.Is(err, os.ErrNotExist) || err != nil {
+		record = consentRecord{}
+	}
+	if record.SchemaVersion == 0 {
+		record.SchemaVersion = consentSchemaVersion
+	}
+	if record.PolicyVersion == "" {
+		record.PolicyVersion = consentPolicyVersion
+	}
+	if record.InstallID == "" {
+		record.InstallID = "local-" + fmt.Sprint(time.Now().UTC().UnixNano())
+	}
+	return record
 }
 
 func writeTierConfig(cfg Config, tier core.ConsentTier, repoHash string, categories map[core.ConsentCategory]bool, declined bool) error {

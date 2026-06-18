@@ -141,13 +141,46 @@ func TestContributeRequiresAgreementForRawCodePublication(t *testing.T) {
 	transcript := contributeTranscript(t, "add a feature to keep.txt")
 
 	err := runContributeCommand(cfg, []string{"--print", transcript})
-	if err == nil || !strings.Contains(err.Error(), "--accept-code-publication-agreement") {
+	if err == nil || !strings.Contains(err.Error(), "proofswe agent install --accept-code-publication-agreement") {
 		t.Fatalf("expected agreement error, got %v", err)
 	}
 	var stdout bytes.Buffer
 	cfg.Stdout = &stdout
 	if err := runContributeCommand(cfg, []string{"--accept-code-publication-agreement", "--print", transcript}); err != nil {
 		t.Fatalf("contribute with agreement: %v", err)
+	}
+	var task corpus.Task
+	if err := json.Unmarshal(stdout.Bytes(), &task); err != nil {
+		t.Fatalf("decode task: %v", err)
+	}
+	if task.CodePublicationAgreementVersion != corpus.CodePublicationAgreementVersion {
+		t.Fatalf("agreement version = %q, want %q", task.CodePublicationAgreementVersion, corpus.CodePublicationAgreementVersion)
+	}
+}
+
+func TestContributeUsesStoredCodePublicationAgreement(t *testing.T) {
+	gitAvailable(t)
+	repo := t.TempDir()
+	initRepo(t, repo)
+	if err := os.Remove(filepath.Join(repo, "LICENSE")); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nADDED_BY_AGENT\n")
+	var stdout bytes.Buffer
+	cfg := Config{
+		HomeDir: t.TempDir(),
+		WorkDir: repo,
+		Stdout:  &stdout,
+		Stderr:  io.Discard,
+		Getenv:  func(string) string { return "" },
+	}
+	if err := acceptCodePublicationAgreement(cfg); err != nil {
+		t.Fatalf("accept agreement: %v", err)
+	}
+	transcript := contributeTranscript(t, "add a feature to keep.txt")
+
+	if err := runContributeCommand(cfg, []string{"--print", transcript}); err != nil {
+		t.Fatalf("contribute with stored agreement: %v", err)
 	}
 	var task corpus.Task
 	if err := json.Unmarshal(stdout.Bytes(), &task); err != nil {

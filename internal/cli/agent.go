@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,12 +27,14 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 	flags := flag.NewFlagSet("agent install", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var codexHome, claudeHome string
-	var ifMissing, quiet, auto bool
+	var ifMissing, quiet, auto, acceptCodePublicationAgreement, promptCodePublicationAgreement bool
 	flags.StringVar(&codexHome, "codex-home", "", "Codex home directory (default: CODEX_HOME or ~/.codex)")
 	flags.StringVar(&claudeHome, "claude-home", "", "Claude Code home directory (default: ~/.claude)")
 	flags.BoolVar(&ifMissing, "if-missing", false, "only write missing agent assets")
 	flags.BoolVar(&quiet, "quiet", false, "suppress install summary")
 	flags.BoolVar(&auto, "auto", false, "best-effort install from package lifecycle")
+	flags.BoolVar(&acceptCodePublicationAgreement, "accept-code-publication-agreement", false, "allow proofswe to publish captured raw code to the public corpus")
+	flags.BoolVar(&promptCodePublicationAgreement, "prompt-code-publication-agreement", false, "ask to allow public corpus code publishing when interactive")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
@@ -38,6 +42,12 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 		return fmt.Errorf("%w: agent install does not accept positional arguments", ErrUsage)
 	}
 	cfg = cfg.withDefaults()
+	if cfg.Stdout == nil {
+		cfg.Stdout = io.Discard
+	}
+	if cfg.Stderr == nil {
+		cfg.Stderr = io.Discard
+	}
 	if auto {
 		disabled, err := agentInstallDisabled(cfg)
 		if err != nil {
@@ -65,6 +75,15 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 	if err := writeAgentAsset(claudeSkillPath, claudeBenchmarkSkill, ifMissing); err != nil {
 		return err
 	}
+	if acceptCodePublicationAgreement {
+		if err := acceptCodePublicationAgreementConsent(cfg); err != nil {
+			return err
+		}
+	} else if promptCodePublicationAgreement {
+		if err := maybePromptCodePublicationAgreement(cfg); err != nil {
+			return err
+		}
+	}
 	if quiet {
 		return nil
 	}
@@ -73,6 +92,35 @@ func runAgentInstallCommand(cfg Config, args []string) error {
 	_, _ = fmt.Fprintf(cfg.Stdout, "installed Claude Code skill: %s\n", claudeSkillPath)
 	_, _ = fmt.Fprintln(cfg.Stdout, "\nUse /prompts:benchmark or mention $proofswe-benchmark inside Codex; mention $proofswe-benchmark inside Claude Code.")
 	return nil
+}
+
+func acceptCodePublicationAgreementConsent(cfg Config) error {
+	if err := acceptCodePublicationAgreement(cfg); err != nil {
+		return fmt.Errorf("write code publication agreement: %w", err)
+	}
+	return nil
+}
+
+func maybePromptCodePublicationAgreement(cfg Config) error {
+	accepted, err := codePublicationAgreementAccepted(cfg)
+	if err != nil {
+		return fmt.Errorf("read code publication agreement: %w", err)
+	}
+	if accepted || !isTTY(cfg.Stdin) {
+		return nil
+	}
+	_, _ = fmt.Fprint(cfg.Stdout, "Allow proofswe to publish captured raw code snippets/patches from public repos when you submit tasks? [y/N] ")
+	reader := bufio.NewReader(cfg.Stdin)
+	answer, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read code publication agreement answer: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		return acceptCodePublicationAgreementConsent(cfg)
+	default:
+		return nil
+	}
 }
 
 func agentInstallDisabled(cfg Config) (bool, error) {

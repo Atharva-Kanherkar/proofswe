@@ -71,8 +71,13 @@ if (
 
 try {
   const bin = binaryPath();
-  spawnSync(bin, ["agent", "install", "--auto", "--if-missing", "--quiet"], {
-    stdio: "ignore",
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && process.env.CI !== "true");
+  const args = ["agent", "install", "--auto", "--if-missing", "--quiet"];
+  if (interactive) {
+    args.push("--prompt-code-publication-agreement");
+  }
+  spawnSync(bin, args, {
+    stdio: interactive ? "inherit" : "ignore",
   });
   process.exit(0);
 } catch {

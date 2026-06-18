@@ -23,7 +23,6 @@ import (
 //
 //	proofswe contribute <transcript.jsonl> [--harness=…]
 //	    [--as=@handle] [--out=task.json] [--print] [--force]
-//	    [--accept-code-publication-agreement]
 //
 // Reproducibility requires a public remote, a base commit, and a prompt: only
 // then can a third party clone the starting state and re-run the
@@ -72,10 +71,7 @@ func runContributeCommand(cfg Config, args []string) error {
 
 	taskID := contributionTaskID(captured)
 	task := corpus.FromCapture(captured, extracted, landed, &result, taskID, strings.TrimSpace(handle), time.Now())
-	if acceptCodePublicationAgreement {
-		task.CodePublicationAgreementVersion = corpus.CodePublicationAgreementVersion
-	}
-	if err := requireCodePublicationAgreement(task); err != nil {
+	if err := applyCodePublicationAgreement(cfg, &task, acceptCodePublicationAgreement); err != nil {
 		return err
 	}
 
@@ -174,11 +170,25 @@ func repoAtTranscriptStart(ctx context.Context, root string, repo core.TaskRepo,
 	return repo
 }
 
+func applyCodePublicationAgreement(cfg Config, task *corpus.Task, acceptedFlag bool) error {
+	if acceptedFlag {
+		task.CodePublicationAgreementVersion = corpus.CodePublicationAgreementVersion
+		if err := acceptCodePublicationAgreement(cfg); err != nil {
+			return fmt.Errorf("write code publication agreement: %w", err)
+		}
+	} else if accepted, err := codePublicationAgreementAccepted(cfg); err != nil {
+		return fmt.Errorf("read code publication agreement: %w", err)
+	} else if accepted {
+		task.CodePublicationAgreementVersion = corpus.CodePublicationAgreementVersion
+	}
+	return requireCodePublicationAgreement(*task)
+}
+
 func requireCodePublicationAgreement(task corpus.Task) error {
 	if !corpus.RequiresCodePublicationAgreement(task) || corpus.HasCodePublicationAgreement(task) {
 		return nil
 	}
-	return fmt.Errorf("code publication agreement required: this public repo license is %q, so rerun with --accept-code-publication-agreement to confirm you have the right to publish captured raw code to the public corpus", task.Repo.LicenseSPDX)
+	return fmt.Errorf("code publication agreement required: this public repo license is %q, so run `proofswe agent install --accept-code-publication-agreement` once (or pass --accept-code-publication-agreement) to allow publishing captured raw code to the public corpus", task.Repo.LicenseSPDX)
 }
 
 // contributionTaskID derives a stable, content-addressed id from the starting

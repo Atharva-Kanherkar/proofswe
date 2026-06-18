@@ -118,10 +118,7 @@ func runSubmitCommand(ctx context.Context, cfg Config, args []string) error {
 	if err != nil {
 		return err
 	}
-	if acceptCodePublicationAgreement {
-		task.CodePublicationAgreementVersion = corpus.CodePublicationAgreementVersion
-	}
-	if err := requireCodePublicationAgreement(task); err != nil {
+	if err := applyCodePublicationAgreement(cfg, &task, acceptCodePublicationAgreement); err != nil {
 		return err
 	}
 	if problems := corpus.ReproducibilityProblems(task); len(problems) > 0 {
