@@ -1,7 +1,6 @@
 import WaitlistForm from "./waitlist-form";
 
-// TODO: confirm the real AgentClash URL
-const AGENTCLASH_URL = "https://agentclash.com";
+const AGENTCLASH_URL = "https://agentclash.dev";
 
 export default function Home() {
   return (
