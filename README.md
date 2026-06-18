@@ -39,6 +39,22 @@ proofswe submit --no-wait
 proofswe submit --endpoint https://your-api.example/v1/submissions
 ```
 
+## Bulk Upload
+
+To upload multiple discovered conversations, run:
+
+```sh
+proofswe upload
+```
+
+Interactive mode shows repositories first, then lets you deselect individual
+transcripts inside each selected repository before upload. For scripts:
+
+```sh
+proofswe upload --repo /path/to/repo --no-wait
+proofswe upload --all --dry-run
+```
+
 ## Agent Helpers
 
 After install, ask your coding agent to use `/benchmark` or the

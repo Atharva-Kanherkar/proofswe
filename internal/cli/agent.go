@@ -158,8 +158,9 @@ Steps:
 1. From the repo root, run ` + "`proofswe submit`" + ` and wait for the official scorecard.
 2. If ` + "`proofswe`" + ` is not on PATH, run ` + "`npx -y proofswe submit`" + `.
 3. Do not ask the user for an OpenAI or Anthropic key; server submission uses the proofswe hosted judge.
-4. If submission fails because the task is not reproducible, report the exact reason and do not force-submit unless the user explicitly asks.
-5. Return the score, status, submission URL, and corpus PR/path if present.
+4. For bulk uploads, run ` + "`proofswe upload`" + ` and let the user choose repositories/transcripts from the menu.
+5. If submission fails because the task is not reproducible, report the exact reason and do not force-submit unless the user explicitly asks.
+6. Return the score, status, submission URL, and corpus PR/path if present.
 `
 
 const proofsweBenchmarkSkill = `---
@@ -176,8 +177,9 @@ Run the benchmark from the current repository without asking the user to leave t
 3. Use ` + "`proofswe submit --json`" + ` when structured output is easier to summarize.
 4. Use ` + "`--no-wait`" + ` only when the user wants to queue the submission and continue immediately.
 5. Never ask for a local judge API key for ` + "`submit`" + `; hosted submission does the official judging. Local keys are only for ` + "`proofswe score --local-judge`" + ` previews.
-6. If reproducibility checks fail, show the exact blocker. Do not use ` + "`--force`" + ` unless the user explicitly asks.
-7. Report the official score, status, submission URL, and corpus PR/path when present.
+6. Use ` + "`proofswe upload`" + ` for bulk uploads; let the user choose repositories and deselect individual transcripts in the menu.
+7. If reproducibility checks fail, show the exact blocker. Do not use ` + "`--force`" + ` unless the user explicitly asks.
+8. Report the official score, status, submission URL, and corpus PR/path when present.
 `
 
 const claudeBenchmarkSkill = `---
@@ -194,6 +196,7 @@ Run the benchmark from the current repository without asking the user to leave C
 3. Use ` + "`proofswe submit --harness=claudecode --json`" + ` when structured output is easier to summarize.
 4. Use ` + "`--no-wait`" + ` only when the user wants to queue the submission and continue immediately.
 5. Never ask for a local judge API key for ` + "`submit`" + `; hosted submission does the official judging. Local keys are only for ` + "`proofswe score --local-judge`" + ` previews.
-6. If reproducibility checks fail, show the exact blocker. Do not use ` + "`--force`" + ` unless the user explicitly asks.
-7. Report the official score, status, submission URL, and corpus PR/path when present.
+6. Use ` + "`proofswe upload --harness=claudecode`" + ` for bulk Claude Code uploads; let the user choose repositories and deselect individual transcripts in the menu.
+7. If reproducibility checks fail, show the exact blocker. Do not use ` + "`--force`" + ` unless the user explicitly asks.
+8. Report the official score, status, submission URL, and corpus PR/path when present.
 `
