@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Fraunces, Geist_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import ThemeToggle from "@/components/theme-toggle";
 import "./globals.css";
 
@@ -93,6 +94,7 @@ export default function RootLayout({
         >
           follow the creator atharva ↗
         </a>
+        <Analytics />
       </body>
     </html>
   );
