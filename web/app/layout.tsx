@@ -91,8 +91,7 @@ export default function RootLayout({
           target="_blank"
           rel="noopener noreferrer"
         >
-          <span className="creator-credit-role">creator</span>
-          follow atharva ↗
+          follow the creator atharva ↗
         </a>
       </body>
     </html>

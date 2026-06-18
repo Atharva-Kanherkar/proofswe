@@ -176,12 +176,6 @@ body {
 .creator-credit:hover {
   color: var(--fg);
 }
-.creator-credit-role {
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
 .creator-credit:focus-visible {
   outline: none;
   border-radius: 6px;
