@@ -184,7 +184,7 @@ func gitAddedLinesContext(ctx context.Context, root string) ([]lineRef, error) {
 
 	if _, err := runGitContext(ctx, root, "rev-parse", "--verify", "--quiet", "HEAD"); err == nil {
 		// core.quotePath=false keeps non-ASCII paths unquoted so header parsing is exact.
-		diff, err := runGitContext(ctx, root, "-c", "core.quotePath=false", "diff", "--no-color", "HEAD")
+		diff, err := runGitContext(ctx, root, "-c", "core.quotePath=false", "diff", "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "HEAD")
 		if err != nil {
 			return nil, err
 		}
@@ -196,6 +196,7 @@ func gitAddedLinesContext(ctx context.Context, root string) ([]lineRef, error) {
 		return nil, err
 	}
 	for _, rel := range splitNUL(out) {
+		rel = normalizeRepoRelativePath(rel)
 		if rel == "" {
 			continue
 		}
@@ -228,7 +229,7 @@ func parseDiffAddedLines(diff []byte) []lineRef {
 				current = ""
 				continue
 			}
-			current = strings.TrimPrefix(path, "b/")
+			current = normalizeRepoRelativePath(strings.TrimPrefix(path, "b/"))
 		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
 			if current != "" {
 				refs = append(refs, lineRef{path: current, text: line[1:]})
@@ -236,6 +237,20 @@ func parseDiffAddedLines(diff []byte) []lineRef {
 		}
 	}
 	return refs
+}
+
+// normalizeRepoRelativePath canonicalizes a git-emitted path so the capture
+// side hashes the same string the resolve side does. Git emits forward-slash,
+// repo-relative paths on every platform under core.quotePath=false; Clean+ToSlash
+// round-trips those identically while collapsing any "./" prefix. It deliberately
+// does NOT rewrite backslashes: resolve.go hashes raw git paths, so munging "\"
+// here would desync the two sides for a (legal, rare) backslash filename on POSIX.
+func normalizeRepoRelativePath(path string) string {
+	path = filepath.ToSlash(filepath.Clean(path))
+	if path == "." {
+		return ""
+	}
+	return strings.TrimPrefix(path, "./")
 }
 
 type metadata struct {

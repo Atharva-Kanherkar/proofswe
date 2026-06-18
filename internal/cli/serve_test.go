@@ -118,6 +118,9 @@ func TestSubmissionHandler_QueuesAndPollsServerJudge(t *testing.T) {
 	if polled.Status != submissionStatusJudged || polled.Scorecard == nil || polled.Scorecard.Composite <= 0 {
 		t.Fatalf("submission did not become judged: %+v", polled)
 	}
+	if polled.Scorecard.ScoreVersion != score.ScoreVersion {
+		t.Fatalf("score_version = %q, want %q", polled.Scorecard.ScoreVersion, score.ScoreVersion)
+	}
 	if judgeCalls.Load() != 1 {
 		t.Fatalf("judge calls = %d, want 1", judgeCalls.Load())
 	}

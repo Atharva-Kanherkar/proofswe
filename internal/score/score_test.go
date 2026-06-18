@@ -59,6 +59,13 @@ func TestScore_SuccessIsPendingAndExcluded(t *testing.T) {
 	}
 }
 
+func TestScore_StampsScoreVersion(t *testing.T) {
+	r := Score(Signals{Verification: "passed", Terminated: boolp(true)})
+	if r.ScoreVersion != ScoreVersion {
+		t.Fatalf("score_version = %q, want %q", r.ScoreVersion, ScoreVersion)
+	}
+}
+
 func TestEstimateCostUSD(t *testing.T) {
 	cost, est := EstimateCostUSD("claude-opus-4-7", 43000, 5100, 40000)
 	if est {
@@ -132,6 +139,70 @@ func TestScore_UtilityRewardsVerifiedAcceptedWork(t *testing.T) {
 	}
 }
 
+func TestScore_UtilityKeepsOutcomePrimaryAcrossFrictionShapes(t *testing.T) {
+	friction := &ExtractedSignals{HumanCorrections: 2, ReworkCount: 5}
+	cases := []struct {
+		name string
+		s    Signals
+		min  float64
+		max  float64
+	}{
+		{
+			name: "landed verified product steering",
+			s: Signals{
+				ToolCalls:    341,
+				Turns:        20,
+				Edits:        25,
+				Verification: "passed",
+				Landed:       true,
+				Terminated:   boolp(true),
+				Extracted:    friction,
+			},
+			min: 60,
+			max: 75,
+		},
+		{
+			name: "verified but not landed with same friction",
+			s: Signals{
+				ToolCalls:    341,
+				Turns:        20,
+				Edits:        25,
+				Verification: "passed",
+				Terminated:   boolp(true),
+				Extracted:    friction,
+			},
+			min: 35,
+			max: 55,
+		},
+		{
+			name: "failed abandoned with same friction",
+			s: Signals{
+				ToolCalls:    341,
+				Turns:        20,
+				Edits:        25,
+				Verification: "failed",
+				Terminated:   boolp(false),
+				Extracted:    friction,
+			},
+			min: 0,
+			max: 5,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := Score(tc.s)
+			if r.Utility.Score < tc.min || r.Utility.Score > tc.max {
+				t.Fatalf("utility = %.1f, want in [%.1f, %.1f]\nevidence=%#v", r.Utility.Score, tc.min, tc.max, r.Utility.Evidence)
+			}
+			for _, want := range []string{"human corrections 2", "rework 5", "extra collaborative turns 12"} {
+				if !hasEvidence(r.Utility.Evidence, want) {
+					t.Fatalf("evidence = %#v, want %q recorded", r.Utility.Evidence, want)
+				}
+			}
+		})
+	}
+}
+
 func TestScore_UtilityPenalizesFailureAndFriction(t *testing.T) {
 	r := Score(Signals{
 		ToolCalls:    10,
@@ -144,6 +215,32 @@ func TestScore_UtilityPenalizesFailureAndFriction(t *testing.T) {
 	})
 	if r.Utility.Score > 5 {
 		t.Fatalf("utility = %.1f, want very low utility for failed high-friction session", r.Utility.Score)
+	}
+}
+
+func hasEvidence(evidence []string, prefix string) bool {
+	for _, item := range evidence {
+		if len(item) >= len(prefix) && item[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
+}
+
+func TestScore_InterruptionsAreBoundedFriction(t *testing.T) {
+	base := Signals{Verification: "passed", Landed: true, Terminated: boolp(true)}
+	noisy := base
+	noisy.Extracted = &ExtractedSignals{Interruptions: 3}
+
+	clean := Score(base)
+	withInterruptions := Score(noisy)
+
+	if withInterruptions.Utility.Score >= clean.Utility.Score {
+		t.Fatalf("interruptions should lower utility: clean=%.1f noisy=%.1f",
+			clean.Utility.Score, withInterruptions.Utility.Score)
+	}
+	if !hasEvidence(withInterruptions.Utility.Evidence, "interruptions 3") {
+		t.Fatalf("evidence = %#v, want %q recorded", withInterruptions.Utility.Evidence, "interruptions 3")
 	}
 }
 

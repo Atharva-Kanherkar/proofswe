@@ -94,11 +94,12 @@ type Utility struct {
 // Utility. Composite is kept as a back-compat alias of Utility.Score (it used to
 // be the mean over present axes); prefer Utility for the headline number.
 type Result struct {
-	Model     string  `json:"model,omitempty"`
-	Axes      []Axis  `json:"axes"`
-	Composite float64 `json:"composite"`
-	Utility   Utility `json:"utility"`
-	Note      string  `json:"note"`
+	Model        string  `json:"model,omitempty"`
+	ScoreVersion string  `json:"score_version"`
+	Axes         []Axis  `json:"axes"`
+	Composite    float64 `json:"composite"`
+	Utility      Utility `json:"utility"`
+	Note         string  `json:"note"`
 }
 
 const (
@@ -106,6 +107,10 @@ const (
 	resultNote    = "provisional session utility; sigmoid priors, deterministic-first, judge capped"
 	maxJudgeNudge = 12.0
 )
+
+// ScoreVersion identifies the deterministic scoring algorithm and coefficient
+// set used for Result/scorecard values. Bump it whenever score meaning changes.
+const ScoreVersion = "score/2"
 
 // Score scores Signals against the default baselines.
 func Score(s Signals) Result { return ScoreWith(s, DefaultBaselines) }
@@ -121,7 +126,7 @@ func ScoreWith(s Signals, b Baselines) Result {
 	}
 	utility := utilityScore(s, b)
 
-	return Result{Model: s.Model, Axes: axes, Composite: utility.Score, Utility: utility, Note: resultNote}
+	return Result{Model: s.Model, ScoreVersion: ScoreVersion, Axes: axes, Composite: utility.Score, Utility: utility, Note: resultNote}
 }
 
 func efficiencyAxis(s Signals, b Baselines) Axis {
@@ -235,7 +240,7 @@ func deterministicUtilityLogit(s Signals, b Baselines) (float64, []string) {
 
 	switch s.Verification {
 	case "passed":
-		add(1.6, "verification passed")
+		add(1.7, "verification passed")
 	case "failed":
 		add(-2.0, "verification failed")
 	default:
@@ -246,13 +251,13 @@ func deterministicUtilityLogit(s Signals, b Baselines) (float64, []string) {
 		add(0.7, "verified after edit")
 	}
 	if s.Landed {
-		add(1.0, "landed action")
+		add(1.1, "landed action")
 	}
 	switch {
 	case s.Terminated == nil:
 		add(0, "termination unknown")
 	case *s.Terminated:
-		add(0.35, "clean end")
+		add(0.4, "clean end")
 	default:
 		add(-1.5, "abandoned")
 	}
@@ -262,13 +267,13 @@ func deterministicUtilityLogit(s Signals, b Baselines) (float64, []string) {
 	}
 	if s.Extracted != nil {
 		if corrections := capInt(s.Extracted.HumanCorrections, 5); corrections > 0 {
-			add(-0.45*float64(corrections), fmt.Sprintf("human corrections %d", corrections))
+			add(-0.35*float64(corrections), fmt.Sprintf("human corrections %d", corrections))
 		}
 		if interruptions := capInt(s.Extracted.Interruptions, 4); interruptions > 0 {
-			add(-0.25*float64(interruptions), fmt.Sprintf("interruptions %d", interruptions))
+			add(-0.20*float64(interruptions), fmt.Sprintf("interruptions %d", interruptions))
 		}
 		if rework := capInt(s.Extracted.ReworkCount, 5); rework > 0 {
-			add(-0.25*float64(rework), fmt.Sprintf("rework %d", rework))
+			add(-0.20*float64(rework), fmt.Sprintf("rework %d", rework))
 		}
 		if s.Extracted.HumanAcceptances > 0 {
 			add(0.8, "human acceptance")
@@ -280,8 +285,13 @@ func deterministicUtilityLogit(s Signals, b Baselines) (float64, []string) {
 		add(-1.2*clamp(rate, 0, 1), fmt.Sprintf("tool error rate %.0f%%", 100*rate))
 	}
 	if s.Turns > int(b.Turns) {
-		extra := s.Turns - int(b.Turns)
-		add(-0.1*float64(capInt(extra, 12)), fmt.Sprintf("extra human turns %d", extra))
+		// Turn count mixes corrective supervision with ordinary product steering.
+		// Keep it as bounded friction evidence instead of letting long but shipped
+		// collaboration dominate the outcome signal. Print the capped count so the
+		// evidence label matches the penalty actually applied (as corrections/
+		// interruptions/rework do above).
+		extra := capInt(s.Turns-int(b.Turns), 16)
+		add(-0.055*float64(extra), fmt.Sprintf("extra collaborative turns %d", extra))
 	}
 
 	return logit, evidence

@@ -418,6 +418,7 @@ func writeScoreJSON(w io.Writer, r score.Result, s score.Signals, meta scoreMeta
 	out := struct {
 		Model                 string        `json:"model"`
 		Composite             float64       `json:"composite"`
+		ScoreVersion          string        `json:"score_version"`
 		Utility               score.Utility `json:"utility"`
 		ScoreKind             string        `json:"score_kind"`
 		JudgeStatus           string        `json:"judge_status"`
@@ -425,7 +426,7 @@ func writeScoreJSON(w io.Writer, r score.Result, s score.Signals, meta scoreMeta
 		Axes                  []score.Axis  `json:"axes"`
 		Signals               score.Signals `json:"signals"`
 		Note                  string        `json:"note"`
-	}{r.Model, r.Composite, r.Utility, meta.ScoreKind, meta.JudgeStatus, meta.OfficialScoreRequires, r.Axes, s, r.Note}
+	}{r.Model, r.Composite, r.ScoreVersion, r.Utility, meta.ScoreKind, meta.JudgeStatus, meta.OfficialScoreRequires, r.Axes, s, r.Note}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
