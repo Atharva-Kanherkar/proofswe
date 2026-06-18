@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Atharva-Kanherkar/proofswe/internal/corpus"
 )
 
 func TestAgentInstallWritesCodexPromptAndSkill(t *testing.T) {
@@ -85,6 +87,44 @@ func TestAgentInstallAutoQuietIfMissingPreservesExistingAssets(t *testing.T) {
 	}
 	if got := mustReadString(t, filepath.Join(claudeHome, "skills", "proofswe-benchmark", "SKILL.md")); !strings.Contains(got, "proofswe submit") {
 		t.Fatalf("missing claude skill: %q", got)
+	}
+}
+
+func TestAgentInstallCanAcceptCodePublicationAgreement(t *testing.T) {
+	var stdout bytes.Buffer
+	home := t.TempDir()
+	codexHome := filepath.Join(home, "codex-home")
+	claudeHome := filepath.Join(home, "claude-home")
+	cfg := Config{
+		HomeDir: home,
+		Stdout:  &stdout,
+		Stderr:  &bytes.Buffer{},
+		Getenv:  func(string) string { return "" },
+	}
+	if err := runAgentCommand(cfg, []string{
+		"install",
+		"--accept-code-publication-agreement",
+		"--codex-home", codexHome,
+		"--claude-home", claudeHome,
+	}); err != nil {
+		t.Fatalf("agent install: %v", err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(codexHome, "prompts", "benchmark.md"),
+		filepath.Join(codexHome, "skills", "proofswe-benchmark", "SKILL.md"),
+		filepath.Join(claudeHome, "skills", "proofswe-benchmark", "SKILL.md"),
+	} {
+		if got := mustReadString(t, path); !strings.Contains(got, "proofswe submit") {
+			t.Fatalf("installed asset %s missing submit command:\n%s", path, got)
+		}
+	}
+	record, err := readConsentRecord(cfg)
+	if err != nil {
+		t.Fatalf("read consent record: %v", err)
+	}
+	if record.CodePublicationAgreementVersion != corpus.CodePublicationAgreementVersion {
+		t.Fatalf("agreement version = %q, want %q", record.CodePublicationAgreementVersion, corpus.CodePublicationAgreementVersion)
 	}
 }
 

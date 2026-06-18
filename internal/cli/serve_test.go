@@ -512,6 +512,39 @@ func TestMemorySubmissionStore_RejectsTaskIDProvenanceConflict(t *testing.T) {
 	}
 }
 
+func TestValidateSubmittedTaskRejectsPatchlessWithoutHistoricalBase(t *testing.T) {
+	task := corpusTaskForServe(score.ExtractedSignals{Scope: score.ScopeSignals{FilesTouched: 1}}, true)
+	task.Code = corpus.Code{}
+	task.TaskID = corpusTaskID(task)
+
+	if err := validateSubmittedTask(task); err == nil || !strings.Contains(err.Error(), "base commit was not inferred") {
+		t.Fatalf("validate patchless without historical base = %v", err)
+	}
+	task.Repo.BaseCommitSource = corpus.BaseCommitSourceTranscriptStart
+	if err := validateSubmittedTask(task); err != nil {
+		t.Fatalf("validate patchless historical task: %v", err)
+	}
+
+	task.Outcome.FilesTouched = 0
+	if err := validateSubmittedTask(task); err == nil || !strings.Contains(err.Error(), "no transcript edit evidence") {
+		t.Fatalf("validate patchless without edit evidence = %v", err)
+	}
+}
+
+func TestValidateSubmittedTaskRequiresAgreementForRawCodePublication(t *testing.T) {
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
+	task.Repo.LicenseSPDX = ""
+	task.TaskID = corpusTaskID(task)
+
+	if err := validateSubmittedTask(task); err == nil || !strings.Contains(err.Error(), "code publication agreement required") {
+		t.Fatalf("validate raw code without agreement = %v", err)
+	}
+	task.CodePublicationAgreementVersion = corpus.CodePublicationAgreementVersion
+	if err := validateSubmittedTask(task); err != nil {
+		t.Fatalf("validate raw code with agreement: %v", err)
+	}
+}
+
 func TestSubmitRateLimiter(t *testing.T) {
 	limiter := newSubmitRateLimiter(2, time.Minute)
 	req := httptest.NewRequest(http.MethodPost, "/v1/submissions", nil)

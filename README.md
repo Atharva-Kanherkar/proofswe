@@ -13,8 +13,10 @@ whether it passes a pre-written oracle.
 npx -y proofswe version
 ```
 
-The npm package bundles the Codex and Claude Code benchmark helpers during
-install, so agents can run the submission flow from inside chat.
+The npm package installs the bundled Codex and Claude Code benchmark helpers
+during install, so agents can run the submission flow from inside chat. When the
+install runs in an interactive terminal, it also asks once whether proofswe may
+publish captured raw code snippets/patches from public repos in submitted tasks.
 
 ## Submit A Session
 
@@ -45,6 +47,12 @@ helpers manually:
 
 ```sh
 proofswe agent install
+```
+
+To accept the public corpus code-publishing prompt later or from automation:
+
+```sh
+proofswe agent install --accept-code-publication-agreement
 ```
 
 ## Self-Host The API

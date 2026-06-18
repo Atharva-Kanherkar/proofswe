@@ -70,11 +70,67 @@ func TestContributeEmitsReproducibleTask(t *testing.T) {
 	}
 }
 
-func TestContributeRefusesReproducibleMetadataWithoutPatch(t *testing.T) {
+func TestContributeAllowsReproducibleMetadataWithoutPatch(t *testing.T) {
 	gitAvailable(t)
 	repo := t.TempDir()
-	initRepo(t, repo) // clean repo: no agent-produced diff to publish
+	initRepo(t, repo)
+	runGitForTestEnv(t, repo, []string{
+		"GIT_AUTHOR_DATE=2026-05-31T00:00:00Z",
+		"GIT_COMMITTER_DATE=2026-05-31T00:00:00Z",
+	}, "commit", "--amend", "--no-edit", "--date", "2026-05-31T00:00:00Z")
+	baseCommit := gitOutputForTest(t, repo, "rev-parse", "HEAD")
+	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nADDED_BY_AGENT\n")
+	commitAllAtForTest(t, repo, "agent work", "2026-06-02T00:00:00Z")
+	finalCommit := gitOutputForTest(t, repo, "rev-parse", "HEAD")
 
+	out := filepath.Join(t.TempDir(), "task.json")
+	cfg := Config{
+		HomeDir: t.TempDir(),
+		WorkDir: repo,
+		Stdout:  io.Discard,
+		Stderr:  io.Discard,
+		Getenv:  func(string) string { return "" },
+	}
+	transcript := contributeTranscript(t, "add a feature to keep.txt")
+
+	// A historical session (clean tree -> no captured patch) must reproduce from
+	// the pre-work commit at transcript start, not the final committed work.
+	if err := runContributeCommand(cfg, []string{"--out", out, transcript}); err != nil {
+		t.Fatalf("patchless reproducible task refused: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read task.json: %v", err)
+	}
+	var task corpus.Task
+	if err := json.Unmarshal(data, &task); err != nil {
+		t.Fatalf("task.json is not valid: %v", err)
+	}
+	if probs := corpus.ReproducibilityProblems(task); len(probs) != 0 {
+		t.Fatalf("patchless task flagged non-reproducible: %v", probs)
+	}
+	if task.Code.Patch != "" {
+		t.Errorf("expected empty patch for a clean tree, got %q", task.Code.Patch)
+	}
+	if task.Repo.BaseCommit != baseCommit {
+		t.Errorf("base commit = %s, want historical base %s (final HEAD %s)", task.Repo.BaseCommit, baseCommit, finalCommit)
+	}
+	if task.Repo.BaseCommitSource != corpus.BaseCommitSourceTranscriptStart {
+		t.Errorf("base commit source = %q, want %q", task.Repo.BaseCommitSource, corpus.BaseCommitSourceTranscriptStart)
+	}
+	if len(task.Prompts) == 0 {
+		t.Errorf("prompt not captured")
+	}
+}
+
+func TestContributeRequiresAgreementForRawCodePublication(t *testing.T) {
+	gitAvailable(t)
+	repo := t.TempDir()
+	initRepo(t, repo)
+	if err := os.Remove(filepath.Join(repo, "LICENSE")); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nADDED_BY_AGENT\n")
 	cfg := Config{
 		HomeDir: t.TempDir(),
 		WorkDir: repo,
@@ -85,11 +141,53 @@ func TestContributeRefusesReproducibleMetadataWithoutPatch(t *testing.T) {
 	transcript := contributeTranscript(t, "add a feature to keep.txt")
 
 	err := runContributeCommand(cfg, []string{"--print", transcript})
-	if err == nil {
-		t.Fatal("expected refusal for a task without a code patch")
+	if err == nil || !strings.Contains(err.Error(), "proofswe agent install --accept-code-publication-agreement") {
+		t.Fatalf("expected agreement error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "reproducible") {
-		t.Errorf("unexpected error: %v", err)
+	var stdout bytes.Buffer
+	cfg.Stdout = &stdout
+	if err := runContributeCommand(cfg, []string{"--accept-code-publication-agreement", "--print", transcript}); err != nil {
+		t.Fatalf("contribute with agreement: %v", err)
+	}
+	var task corpus.Task
+	if err := json.Unmarshal(stdout.Bytes(), &task); err != nil {
+		t.Fatalf("decode task: %v", err)
+	}
+	if task.CodePublicationAgreementVersion != corpus.CodePublicationAgreementVersion {
+		t.Fatalf("agreement version = %q, want %q", task.CodePublicationAgreementVersion, corpus.CodePublicationAgreementVersion)
+	}
+}
+
+func TestContributeUsesStoredCodePublicationAgreement(t *testing.T) {
+	gitAvailable(t)
+	repo := t.TempDir()
+	initRepo(t, repo)
+	if err := os.Remove(filepath.Join(repo, "LICENSE")); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, "keep.txt"), "line1\nline2\nADDED_BY_AGENT\n")
+	var stdout bytes.Buffer
+	cfg := Config{
+		HomeDir: t.TempDir(),
+		WorkDir: repo,
+		Stdout:  &stdout,
+		Stderr:  io.Discard,
+		Getenv:  func(string) string { return "" },
+	}
+	if err := acceptCodePublicationAgreement(cfg); err != nil {
+		t.Fatalf("accept agreement: %v", err)
+	}
+	transcript := contributeTranscript(t, "add a feature to keep.txt")
+
+	if err := runContributeCommand(cfg, []string{"--print", transcript}); err != nil {
+		t.Fatalf("contribute with stored agreement: %v", err)
+	}
+	var task corpus.Task
+	if err := json.Unmarshal(stdout.Bytes(), &task); err != nil {
+		t.Fatalf("decode task: %v", err)
+	}
+	if task.CodePublicationAgreementVersion != corpus.CodePublicationAgreementVersion {
+		t.Fatalf("agreement version = %q, want %q", task.CodePublicationAgreementVersion, corpus.CodePublicationAgreementVersion)
 	}
 }
 

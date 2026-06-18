@@ -88,12 +88,18 @@ type TaskRepo struct {
 	RemoteURL             string            `json:"remote_url,omitempty"`
 	BaseCommit            string            `json:"base_commit,omitempty"`
 	BaseCommitCommittedAt string            `json:"base_commit_committed_at,omitempty"`
+	BaseCommitSource      string            `json:"base_commit_source,omitempty"`
 	Branch                string            `json:"branch,omitempty"`
 	Dirty                 bool              `json:"dirty,omitempty"`
 	IsPublic              bool              `json:"is_public,omitempty"`
 	LicenseSPDX           string            `json:"license_spdx,omitempty"`
 	LockfileHashes        map[string]string `json:"lockfile_hashes,omitempty"`
 }
+
+const (
+	BaseCommitSourceHead            = "head"
+	BaseCommitSourceTranscriptStart = "transcript_start"
+)
 
 type TaskEnvironment struct {
 	OS             string            `json:"os,omitempty"`
@@ -259,6 +265,7 @@ func ProjectWithCategories(task Task, tier ConsentTier, categories []ConsentCate
 		task.Repo.RemoteURL = ""
 		task.Repo.BaseCommit = ""
 		task.Repo.BaseCommitCommittedAt = ""
+		task.Repo.BaseCommitSource = ""
 		task.Repo.Branch = ""
 		task.Repo.Dirty = false
 		task.Repo.IsPublic = false

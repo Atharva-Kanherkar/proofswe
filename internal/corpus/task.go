@@ -4,7 +4,7 @@
 // drops the salted hashes, consent bookkeeping, and internal ids, and keeps only
 // what makes a session a re-runnable, displayable benchmark item:
 //
-//   - the starting repo state (remote + base commit + license) so anyone can
+//   - the starting repo state (remote + base commit) so anyone can
 //     `git clone && git checkout` into the exact conditions the session began,
 //   - the developer's prompts (the ambiguous, oracle-less ask),
 //   - the agent's trajectory (assistant turns + tool calls/outputs),
@@ -17,6 +17,7 @@
 package corpus
 
 import (
+	"strings"
 	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/core"
@@ -27,33 +28,43 @@ import (
 // change; additions are backward-compatible and do not require a bump.
 const SchemaVersion = 1
 
+const (
+	BaseCommitSourceHead            = core.BaseCommitSourceHead
+	BaseCommitSourceTranscriptStart = core.BaseCommitSourceTranscriptStart
+
+	CodePublicationAgreementVersion = "code-publication/1"
+)
+
 // Task is one reproducible benchmark task as published to the corpus.
 type Task struct {
-	CorpusSchemaVersion int        `json:"corpus_schema_version"`
-	TaskID              string     `json:"task_id"`
-	ContributedAt       time.Time  `json:"contributed_at"`
-	Contributor         string     `json:"contributor,omitempty"`
-	Harness             string     `json:"harness"`
-	HarnessCLIVersion   string     `json:"harness_cli_version,omitempty"`
-	Model               string     `json:"model"`
-	Repo                Repo       `json:"repo"`
-	Prompts             []Prompt   `json:"prompts"`
-	Transcript          Transcript `json:"transcript"`
-	Code                Code       `json:"code,omitzero"`
-	Outcome             Outcome    `json:"outcome"`
-	Scorecard           *Scorecard `json:"scorecard,omitempty"`
-	Scrub               Scrub      `json:"scrub"`
+	CorpusSchemaVersion             int        `json:"corpus_schema_version"`
+	TaskID                          string     `json:"task_id"`
+	ContributedAt                   time.Time  `json:"contributed_at"`
+	Contributor                     string     `json:"contributor,omitempty"`
+	Harness                         string     `json:"harness"`
+	HarnessCLIVersion               string     `json:"harness_cli_version,omitempty"`
+	Model                           string     `json:"model"`
+	Repo                            Repo       `json:"repo"`
+	CodePublicationAgreementVersion string     `json:"code_publication_agreement_version,omitempty"`
+	Prompts                         []Prompt   `json:"prompts"`
+	Transcript                      Transcript `json:"transcript"`
+	Code                            Code       `json:"code,omitzero"`
+	Outcome                         Outcome    `json:"outcome"`
+	Scorecard                       *Scorecard `json:"scorecard,omitempty"`
+	Scrub                           Scrub      `json:"scrub"`
 }
 
-// Repo is the starting state needed to reproduce the task. A task is only
-// reproducible when RemoteURL, BaseCommit, and a permissive LicenseSPDX are all
-// present and the remote is public — see ReproducibilityProblems.
+// Repo is the starting state needed to reproduce the task. A task is
+// reproducible when RemoteURL and BaseCommit are present and the remote is
+// public — see ReproducibilityProblems. LicenseSPDX is recorded for provenance
+// but is not required (many public repos ship no LICENSE file).
 type Repo struct {
-	RemoteURL   string `json:"remote_url"`
-	BaseCommit  string `json:"base_commit"`
-	Branch      string `json:"branch,omitempty"`
-	LicenseSPDX string `json:"license_spdx"`
-	IsPublic    bool   `json:"is_public"`
+	RemoteURL        string `json:"remote_url"`
+	BaseCommit       string `json:"base_commit"`
+	BaseCommitSource string `json:"base_commit_source,omitempty"`
+	Branch           string `json:"branch,omitempty"`
+	LicenseSPDX      string `json:"license_spdx"`
+	IsPublic         bool   `json:"is_public"`
 }
 
 // Prompt is one developer turn — the task statement and any follow-up redirects.
@@ -78,7 +89,9 @@ type Transcript struct {
 }
 
 // Code is the work product: the added lines, split by solution vs test, plus the
-// touched-file list. Present only for license-permissive public repos.
+// touched-file list. Captured for public repos when the working tree has a diff;
+// optional — a historical session from a clean tree still submits (the work is
+// preserved in the trajectory). See repoAllowsRawCode / ReproducibilityProblems.
 type Code struct {
 	Patch     string `json:"patch,omitempty"`
 	TestPatch string `json:"test_patch,omitempty"`
@@ -147,11 +160,12 @@ func FromCapture(task core.Task, ex score.ExtractedSignals, landed bool, card *s
 		HarnessCLIVersion:   task.HarnessCLIVersion,
 		Model:               string(task.Model.ID),
 		Repo: Repo{
-			RemoteURL:   task.Repo.RemoteURL,
-			BaseCommit:  task.Repo.BaseCommit,
-			Branch:      task.Repo.Branch,
-			LicenseSPDX: task.Repo.LicenseSPDX,
-			IsPublic:    task.Repo.IsPublic,
+			RemoteURL:        task.Repo.RemoteURL,
+			BaseCommit:       task.Repo.BaseCommit,
+			BaseCommitSource: task.Repo.BaseCommitSource,
+			Branch:           task.Repo.Branch,
+			LicenseSPDX:      task.Repo.LicenseSPDX,
+			IsPublic:         task.Repo.IsPublic,
 		},
 		Prompts:    promptsFrom(task.Prompts),
 		Transcript: transcriptFrom(task.Trajectory),
@@ -239,6 +253,14 @@ func PermitsCodeRedistribution(spdx string) bool {
 	}
 }
 
+func RequiresCodePublicationAgreement(t Task) bool {
+	return hasCodePatch(t) && !PermitsCodeRedistribution(t.Repo.LicenseSPDX)
+}
+
+func HasCodePublicationAgreement(t Task) bool {
+	return t.CodePublicationAgreementVersion == CodePublicationAgreementVersion
+}
+
 // ReproducibilityProblems returns the reasons a task cannot be reproduced by a
 // third party. An empty slice means the task is a valid reproducible benchmark
 // item. This is the gate `proofswe contribute` enforces before publishing.
@@ -253,16 +275,24 @@ func ReproducibilityProblems(t Task) []string {
 	if t.Repo.BaseCommit == "" {
 		problems = append(problems, "no base commit — the starting state is unknown")
 	}
-	if t.Repo.LicenseSPDX == "" {
-		problems = append(problems, "no detected OSI license — code cannot be redistributed")
-	} else if !PermitsCodeRedistribution(t.Repo.LicenseSPDX) {
-		problems = append(problems, "license "+t.Repo.LicenseSPDX+" is not in the corpus redistribution allowlist")
-	}
 	if len(t.Prompts) == 0 {
 		problems = append(problems, "no developer prompt — there is no task statement")
 	}
-	if t.Code.Patch == "" && t.Code.TestPatch == "" {
-		problems = append(problems, "no code patch — publish before committing or supply a diff-backed task")
+	if !hasCodePatch(t) {
+		if t.Repo.BaseCommitSource != BaseCommitSourceTranscriptStart {
+			problems = append(problems, "no code patch and base commit was not inferred from the transcript start")
+		}
+		if t.Outcome.FilesTouched == 0 {
+			problems = append(problems, "no code patch and no transcript edit evidence")
+		}
 	}
+	// License is recorded for provenance but not gated: a public repo without a
+	// LICENSE file is still re-runnable (clone + checkout + prompt). And a code
+	// patch is no longer required when a historical session has transcript-start
+	// base provenance and edit evidence. The patch is captured when present.
 	return problems
+}
+
+func hasCodePatch(t Task) bool {
+	return strings.TrimSpace(t.Code.Patch) != "" || strings.TrimSpace(t.Code.TestPatch) != ""
 }

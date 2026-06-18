@@ -101,7 +101,7 @@ Usage:
   proofswe submit [transcript] [--harness=…] [--as=@handle] [--endpoint URL] [--json] [--no-wait] [--force]
   proofswe serve [--addr=:8080] [--judge-provider=openai|anthropic] [--judge-model=model]
   proofswe resolve [--maturity=24h]
-  proofswe agent install
+  proofswe agent install [--accept-code-publication-agreement]
   proofswe hook <claudecode|codex> <SessionStart|SessionEnd|Stop>
   proofswe version
   proofswe help

@@ -24,8 +24,8 @@ import (
 //	proofswe contribute <transcript.jsonl> [--harness=…]
 //	    [--as=@handle] [--out=task.json] [--print] [--force]
 //
-// Reproducibility requires a public remote, a base commit, and a permissive
-// license: only then can a third party clone the starting state and re-run the
+// Reproducibility requires a public remote, a base commit, and a prompt: only
+// then can a third party clone the starting state and re-run the
 // task against another model. Sessions that don't qualify are refused (the
 // corpus is the reproducible subset; private-repo work contributes aggregate
 // stats elsewhere). Secrets are scrubbed on the way out — the one filter the
@@ -34,12 +34,13 @@ func runContributeCommand(cfg Config, args []string) error {
 	flags := flag.NewFlagSet("contribute", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var harness, outPath, handle string
-	var printJSON, force bool
+	var printJSON, force, acceptCodePublicationAgreement bool
 	flags.StringVar(&harness, "harness", "", "claudecode|codex (auto-detected if empty)")
 	flags.StringVar(&handle, "as", "", "optional attribution, e.g. @you (omit to stay anonymous)")
 	flags.StringVar(&outPath, "out", "", "write the task.json here (default: ./<task-id>.json)")
 	flags.BoolVar(&printJSON, "print", false, "print the task.json to stdout instead of writing a file")
 	flags.BoolVar(&force, "force", false, "emit even if the task is not fully reproducible (NOT corpus-eligible)")
+	flags.BoolVar(&acceptCodePublicationAgreement, "accept-code-publication-agreement", false, "confirm you have the right to publish captured raw code to the public corpus")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
@@ -70,6 +71,9 @@ func runContributeCommand(cfg Config, args []string) error {
 
 	taskID := contributionTaskID(captured)
 	task := corpus.FromCapture(captured, extracted, landed, &result, taskID, strings.TrimSpace(handle), time.Now())
+	if err := applyCodePublicationAgreement(cfg, &task, acceptCodePublicationAgreement); err != nil {
+		return err
+	}
 
 	if problems := corpus.ReproducibilityProblems(task); len(problems) > 0 {
 		printContributionProblems(cfg.Stderr, problems)
@@ -118,6 +122,9 @@ func buildContributionTask(ctx context.Context, cfg Config, harness, path string
 	var added []lineRef
 	if info.root != "" {
 		added, _ = gitAddedLinesContext(ctx, info.root)
+		if len(added) == 0 {
+			repo = repoAtTranscriptStart(ctx, info.root, repo, transcript.startedAt)
+		}
 	}
 
 	task := core.Task{
@@ -141,6 +148,47 @@ func buildContributionTask(ctx context.Context, cfg Config, harness, path string
 		BestEffortNotice: redact.BestEffortNotice,
 	}
 	return core.ProjectWithCategories(task, core.ConsentTierFull, full), nil
+}
+
+func repoAtTranscriptStart(ctx context.Context, root string, repo core.TaskRepo, startedAt time.Time) core.TaskRepo {
+	if root == "" || startedAt.IsZero() {
+		return repo
+	}
+	out, err := runGitContext(ctx, root, "rev-list", "-1", "--before="+startedAt.Format(time.RFC3339Nano), "HEAD")
+	if err != nil {
+		return repo
+	}
+	commit := strings.TrimSpace(string(out))
+	if commit == "" {
+		return repo
+	}
+	repo.BaseCommit = commit
+	repo.BaseCommitSource = core.BaseCommitSourceTranscriptStart
+	if ts, tsErr := runGitContext(ctx, root, "show", "-s", "--format=%cI", commit); tsErr == nil {
+		repo.BaseCommitCommittedAt = strings.TrimSpace(string(ts))
+	}
+	return repo
+}
+
+func applyCodePublicationAgreement(cfg Config, task *corpus.Task, acceptedFlag bool) error {
+	if acceptedFlag {
+		task.CodePublicationAgreementVersion = corpus.CodePublicationAgreementVersion
+		if err := acceptCodePublicationAgreement(cfg); err != nil {
+			return fmt.Errorf("write code publication agreement: %w", err)
+		}
+	} else if accepted, err := codePublicationAgreementAccepted(cfg); err != nil {
+		return fmt.Errorf("read code publication agreement: %w", err)
+	} else if accepted {
+		task.CodePublicationAgreementVersion = corpus.CodePublicationAgreementVersion
+	}
+	return requireCodePublicationAgreement(*task)
+}
+
+func requireCodePublicationAgreement(task corpus.Task) error {
+	if !corpus.RequiresCodePublicationAgreement(task) || corpus.HasCodePublicationAgreement(task) {
+		return nil
+	}
+	return fmt.Errorf("code publication agreement required: this public repo license is %q, so run `proofswe agent install --accept-code-publication-agreement` once (or pass --accept-code-publication-agreement) to allow publishing captured raw code to the public corpus", task.Repo.LicenseSPDX)
 }
 
 // contributionTaskID derives a stable, content-addressed id from the starting
@@ -167,7 +215,7 @@ func printContributionProblems(w io.Writer, problems []string) {
 	for _, p := range problems {
 		_, _ = fmt.Fprintf(w, "  ✗ %s\n", p)
 	}
-	_, _ = fmt.Fprintln(w, "  → the corpus is the reproducible OSS subset; private-repo work isn't re-runnable by others.")
+	_, _ = fmt.Fprintln(w, "  → the corpus is the reproducible public-repo subset; private-repo work isn't re-runnable by others.")
 }
 
 func printContributionSummary(w io.Writer, task corpus.Task, outPath string) {
