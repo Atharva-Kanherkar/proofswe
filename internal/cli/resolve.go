@@ -141,7 +141,7 @@ func resolvePendingFile(cfg Config, h hashing.Hasher, path string, now time.Time
 		return quarantineClaimedPending(cfg, claimedPath, fmt.Errorf("pending record missing captured_at"))
 	}
 	if now.Sub(record.CapturedAt.UTC()) < maturity {
-		if err := os.Rename(claimedPath, path); err != nil {
+		if err := retryTransientIO(func() error { return os.Rename(claimedPath, path) }); err != nil {
 			return fmt.Errorf("restore immature pending record: %w", err)
 		}
 		return nil
@@ -152,12 +152,12 @@ func resolvePendingFile(cfg Config, h hashing.Hasher, path string, now time.Time
 		return quarantineClaimedPending(cfg, claimedPath, err)
 	}
 	if err := appendDatapoint(cfg, datapoint); err != nil {
-		if restoreErr := os.Rename(claimedPath, path); restoreErr != nil {
+		if restoreErr := retryTransientIO(func() error { return os.Rename(claimedPath, path) }); restoreErr != nil {
 			return errors.Join(fmt.Errorf("append datapoint: %w", err), fmt.Errorf("restore pending record: %w", restoreErr))
 		}
 		return fmt.Errorf("append datapoint: %w", err)
 	}
-	if err := os.Remove(claimedPath); err != nil {
+	if err := retryTransientIO(func() error { return os.Remove(claimedPath) }); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -166,9 +166,37 @@ func resolvePendingFile(cfg Config, h hashing.Hasher, path string, now time.Time
 	return nil
 }
 
+// transientIORetries / transientIODelay bound how long resolver filesystem ops
+// wait out a short-lived lock. On Windows, antivirus and the search indexer hold
+// a brief handle on a just-created or just-renamed file, which surfaces as
+// ERROR_SHARING_VIOLATION; a few retries absorb that window. 12*25ms = 300ms cap.
+const (
+	transientIORetries = 12
+	transientIODelay   = 25 * time.Millisecond
+)
+
+// retryTransientIO runs fn, retrying while it returns a non-ErrNotExist error.
+// Windows surfaces a scan-induced lock as ERROR_SHARING_VIOLATION, which Go does
+// NOT map to any sentinel (so we can't match on os.ErrPermission); retrying any
+// other error is safe here because the wrapped ops are local file rename/read/
+// remove whose only realistic persistent failures are corruption (caught later
+// at decode) or a genuine ENOENT (treated as terminal: a lost claim race). On
+// POSIX these ops succeed on the first attempt, so behavior is unchanged.
+func retryTransientIO(fn func() error) error {
+	var err error
+	for attempt := 0; attempt < transientIORetries; attempt++ {
+		err = fn()
+		if err == nil || errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		time.Sleep(transientIODelay)
+	}
+	return err
+}
+
 func claimPendingFile(path string, now time.Time) (string, bool, error) {
 	claimed := path + ".resolving-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(now.UnixNano(), 10) + "-" + strconv.FormatUint(resolvingClaimCounter.Add(1), 10)
-	if err := os.Rename(path, claimed); err != nil {
+	if err := retryTransientIO(func() error { return os.Rename(path, claimed) }); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", false, nil
 		}
@@ -183,14 +211,21 @@ func quarantineClaimedPending(cfg Config, claimedPath string, cause error) error
 		return errors.Join(cause, fmt.Errorf("create quarantine dir: %w", err))
 	}
 	dst := filepath.Join(dir, filepath.Base(claimedPath)+".failed")
-	if err := os.Rename(claimedPath, dst); err != nil {
+	if err := retryTransientIO(func() error { return os.Rename(claimedPath, dst) }); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Join(cause, fmt.Errorf("quarantine pending record: %w", err))
 	}
+	// If the claimed file already vanished (ErrNotExist), another pass handled
+	// it; the decode cause still stands but there is nothing left to quarantine.
 	return cause
 }
 
 func readPendingRecordFile(path string) (PendingRecord, error) {
-	data, err := os.ReadFile(path)
+	var data []byte
+	err := retryTransientIO(func() error {
+		var readErr error
+		data, readErr = os.ReadFile(path)
+		return readErr
+	})
 	if err != nil {
 		return PendingRecord{}, err
 	}
