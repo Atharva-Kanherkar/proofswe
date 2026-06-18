@@ -158,6 +158,36 @@ body {
   height: 18px;
 }
 
+/* creator credit — bottom-right corner */
+.creator-credit {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono-stack);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  color: var(--secondary);
+  transition: color 150ms cubic-bezier(0.175, 0.885, 0.32, 1.1);
+}
+.creator-credit:hover {
+  color: var(--fg);
+}
+.creator-credit-role {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.creator-credit:focus-visible {
+  outline: none;
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

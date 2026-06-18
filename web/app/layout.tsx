@@ -85,6 +85,15 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
         <ThemeToggle />
         {children}
+        <a
+          className="creator-credit"
+          href="https://x.com/attharrva15"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span className="creator-credit-role">creator</span>
+          follow atharva ↗
+        </a>
       </body>
     </html>
   );
