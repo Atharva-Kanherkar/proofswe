@@ -20,3 +20,4 @@
 # Local secrets and generated scratch
 .env.local
 target/
+.gstack/
