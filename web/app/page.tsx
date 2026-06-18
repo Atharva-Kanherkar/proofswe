@@ -1,71 +1,64 @@
 import WaitlistForm from "./waitlist-form";
+import Stars from "@/components/stars";
 
 const AGENTCLASH_URL = "https://agentclash.dev";
 
 export default function Home() {
   return (
-    <main className="relative min-h-svh overflow-hidden px-6 py-8 sm:px-12 sm:py-12">
-      <div className="glow" aria-hidden="true" />
+    <main className="relative flex min-h-svh flex-col overflow-hidden">
+      {/* background layers */}
+      <Stars />
 
-      {/* top bar — gen-z lineage tag, top right */}
-      <header className="relative flex justify-end">
-        <a
-          href={AGENTCLASH_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rise font-mono text-[11px] uppercase tracking-[0.25em] text-[var(--muted)] transition-colors hover:text-[var(--fg)]"
-          style={{ animationDelay: "0.1s" }}
-        >
-          an agentclash joint ↗
-        </a>
-      </header>
-
-      {/* center stack */}
-      <section className="relative mx-auto flex min-h-[68svh] max-w-3xl flex-col justify-center">
+      {/* centred editorial hero */}
+      <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 text-center">
         <h1
-          data-text="ProofSWE"
-          className="chrome rise select-none text-[clamp(3.5rem,14vw,9rem)] font-semibold leading-[0.9] tracking-[-0.04em]"
+          className="rise select-none text-[clamp(2.5rem,8vw,5rem)] font-medium leading-none tracking-[-0.02em] text-[var(--fg)]"
           style={{ animationDelay: "0.2s" }}
         >
           ProofSWE
         </h1>
 
-        <div className="mt-6 sm:mt-8">
-          <p
-            className="rise text-2xl font-semibold tracking-tight text-[var(--fg)] sm:text-4xl"
-            style={{ animationDelay: "0.35s" }}
-          >
-            benchmarks are dead.
-          </p>
-          <p
-            className="rise text-2xl font-semibold tracking-tight text-[var(--muted)] sm:text-4xl"
-            style={{ animationDelay: "0.45s" }}
-          >
-            proof is not.
-          </p>
-        </div>
-
-        {/* waitlist */}
-        <div
-          className="rise mt-12 sm:mt-16"
-          style={{ animationDelay: "0.6s" }}
+        <p
+          className="rise mt-6 max-w-xl text-[clamp(1.3rem,3.4vw,2.1rem)] leading-snug text-[var(--fg)]"
+          style={{ animationDelay: "0.35s" }}
         >
-          <p className="mb-4 max-w-md text-base text-[var(--fg)]/80 sm:text-lg">
-            free yourself from benchmark pain.
-          </p>
+          benchmarks are dead.{" "}
+          <span
+            style={{
+              fontFamily: "var(--font-serif-accent), serif",
+              fontStyle: "italic",
+              color: "var(--accent)",
+            }}
+          >
+            proof
+          </span>{" "}
+          is not.
+        </p>
+
+        <p
+          className="rise mt-5 max-w-md text-sm text-[var(--muted)] sm:text-base"
+          style={{ animationDelay: "0.45s" }}
+        >
+          free yourself from benchmark pain.
+        </p>
+
+        <div
+          className="rise mt-8 flex w-full max-w-md justify-center"
+          style={{ animationDelay: "0.65s" }}
+        >
           <WaitlistForm />
         </div>
-      </section>
 
-      {/* bottom-left status */}
-      <footer
-        className="rise relative font-mono text-[11px] uppercase tracking-[0.25em] text-[var(--muted)]"
-        style={{ animationDelay: "0.75s" }}
-      >
-        <p>coming soon</p>
-        <p className="my-2 h-px w-8 bg-[var(--line)]" aria-hidden="true" />
-        <p>proofswe.com</p>
-      </footer>
+        <a
+          href={AGENTCLASH_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rise mt-10 font-mono text-[12px] tracking-tight text-[var(--muted)] transition-colors hover:text-[var(--fg)]"
+          style={{ animationDelay: "0.8s" }}
+        >
+          an agentclash joint ↗
+        </a>
+      </div>
     </main>
   );
 }

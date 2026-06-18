@@ -34,14 +34,15 @@ export default function WaitlistForm() {
   if (status === "done") {
     return (
       <p className="font-mono text-sm tracking-wide text-[var(--fg)]">
-        you&apos;re in. <span className="text-[var(--muted)]">welcome to the proof.</span>
+        you&apos;re in.{" "}
+        <span className="text-[var(--muted)]">welcome to the proof.</span>
       </p>
     );
   }
 
   return (
     <form onSubmit={submit} className="w-full max-w-md">
-      <div className="flex items-center gap-3 border-b border-[var(--line)] pb-2 transition-colors focus-within:border-[var(--fg)]">
+      <div className="flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--surface)] p-1.5 pl-5 transition-colors focus-within:border-[var(--accent)]">
         <input
           type="email"
           required
@@ -49,18 +50,20 @@ export default function WaitlistForm() {
           onChange={(e) => setEmail(e.target.value)}
           placeholder="your@email.com"
           aria-label="email address"
-          className="w-full bg-transparent font-mono text-base text-[var(--fg)] placeholder:text-[var(--muted)] outline-none"
+          className="w-full bg-transparent font-mono text-sm text-[var(--fg)] placeholder:text-[var(--muted)] outline-none"
         />
         <button
           type="submit"
           disabled={status === "loading"}
-          className="shrink-0 font-mono text-sm tracking-wider text-[var(--fg)] transition-opacity hover:opacity-60 disabled:opacity-40"
+          className="shrink-0 rounded-full bg-white px-5 py-2.5 text-sm font-medium text-black transition hover:bg-white/85 disabled:opacity-50"
         >
-          {status === "loading" ? "..." : "lock in →"}
+          {status === "loading" ? "..." : "lock in"}
         </button>
       </div>
       {status === "error" && (
-        <p className="mt-2 font-mono text-xs text-red-400/80">{msg}</p>
+        <p className="mt-2 text-center font-mono text-xs text-[var(--accent)]">
+          {msg}
+        </p>
       )}
     </form>
   );

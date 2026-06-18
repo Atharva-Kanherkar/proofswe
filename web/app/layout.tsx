@@ -1,16 +1,27 @@
 import type { Metadata } from "next";
-import { Inter_Tight, JetBrains_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 
-const sans = Inter_Tight({
+// Body / UI / data — technical precision
+const sans = Geist({
   variable: "--font-sans-stack",
   subsets: ["latin"],
   display: "swap",
 });
 
-const mono = JetBrains_Mono({
+// Figures / labels / readouts
+const mono = Geist_Mono({
   variable: "--font-mono-stack",
   subsets: ["latin"],
+  display: "swap",
+});
+
+// Display + editorial accents (incl. italic)
+const serif = Instrument_Serif({
+  variable: "--font-serif-accent",
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
   display: "swap",
 });
 
@@ -55,7 +66,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${sans.variable} ${mono.variable} h-full antialiased`}
+      className={`${sans.variable} ${mono.variable} ${serif.variable} h-full antialiased`}
     >
       <body className="min-h-full">{children}</body>
     </html>

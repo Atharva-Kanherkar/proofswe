@@ -1,17 +1,26 @@
 @import "tailwindcss";
 
+/* ProofSWE — "Observatory" design system. See DESIGN.md. */
 :root {
-  --bg: #050505;
-  --fg: #f5f5f4;
-  --muted: #6b6b68;
-  --line: rgba(255, 255, 255, 0.14);
+  --bg: #060709;
+  --surface: #0e1014;
+  --surface-raised: #161922;
+  --line: rgba(255, 255, 255, 0.1);
+  --fg: #f4f5f7;
+  --muted: #8a8f98;
+  --faint: #5a5f68;
+  --accent: #e85dda;
 }
 
 @theme inline {
   --color-bg: var(--bg);
+  --color-surface: var(--surface);
   --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
   --font-sans: var(--font-sans-stack);
   --font-mono: var(--font-mono-stack);
+  --font-serif: var(--font-serif-accent);
 }
 
 html,
@@ -26,48 +35,11 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* chrome wordmark — brushed-metal text fill with a sweeping highlight */
-.chrome {
-  background: linear-gradient(
-    180deg,
-    #ffffff 0%,
-    #cfcfcf 28%,
-    #6d6d6d 50%,
-    #d6d6d6 72%,
-    #8a8a8a 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  position: relative;
-}
-
-.chrome::after {
-  content: attr(data-text);
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    105deg,
-    transparent 38%,
-    rgba(255, 255, 255, 0.85) 50%,
-    transparent 62%
-  );
-  background-size: 280% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  background-position: 200% 0;
-  animation: sweep 4.5s ease-in-out 0.4s infinite;
-}
-
-@keyframes sweep {
-  0% {
-    background-position: 200% 0;
-  }
-  45%,
-  100% {
-    background-position: -120% 0;
-  }
+/* editorial accent — Instrument Serif italic */
+.accent {
+  font-family: var(--font-serif-accent), serif;
+  font-style: italic;
+  font-weight: 400;
 }
 
 /* staggered entrance */
@@ -84,36 +56,36 @@ body {
   }
 }
 
-/* slow ambient glow behind the wordmark so the black isn't dead-flat */
-.glow {
+/* starfield */
+.stars {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(
-    600px 320px at 50% 42%,
-    rgba(120, 120, 130, 0.12),
-    transparent 70%
-  );
-  animation: breathe 9s ease-in-out infinite;
+  overflow: hidden;
 }
-
-@keyframes breathe {
+.stars span {
+  position: absolute;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+  animation-name: twinkle;
+  animation-iteration-count: infinite;
+  animation-timing-function: ease-in-out;
+  opacity: 0.25;
+}
+@keyframes twinkle {
   0%,
   100% {
-    opacity: 0.55;
+    opacity: 0.12;
   }
   50% {
-    opacity: 1;
+    opacity: 0.8;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chrome::after,
-  .glow {
+  .stars span {
     animation: none;
-  }
-  .chrome::after {
-    display: none;
   }
   .rise {
     opacity: 1;
