@@ -239,8 +239,13 @@ func parseDiffAddedLines(diff []byte) []lineRef {
 	return refs
 }
 
+// normalizeRepoRelativePath canonicalizes a git-emitted path so the capture
+// side hashes the same string the resolve side does. Git emits forward-slash,
+// repo-relative paths on every platform under core.quotePath=false; Clean+ToSlash
+// round-trips those identically while collapsing any "./" prefix. It deliberately
+// does NOT rewrite backslashes: resolve.go hashes raw git paths, so munging "\"
+// here would desync the two sides for a (legal, rare) backslash filename on POSIX.
 func normalizeRepoRelativePath(path string) string {
-	path = strings.ReplaceAll(path, "\\", "/")
 	path = filepath.ToSlash(filepath.Clean(path))
 	if path == "." {
 		return ""

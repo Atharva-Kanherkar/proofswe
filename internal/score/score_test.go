@@ -227,6 +227,23 @@ func hasEvidence(evidence []string, prefix string) bool {
 	return false
 }
 
+func TestScore_InterruptionsAreBoundedFriction(t *testing.T) {
+	base := Signals{Verification: "passed", Landed: true, Terminated: boolp(true)}
+	noisy := base
+	noisy.Extracted = &ExtractedSignals{Interruptions: 3}
+
+	clean := Score(base)
+	withInterruptions := Score(noisy)
+
+	if withInterruptions.Utility.Score >= clean.Utility.Score {
+		t.Fatalf("interruptions should lower utility: clean=%.1f noisy=%.1f",
+			clean.Utility.Score, withInterruptions.Utility.Score)
+	}
+	if !hasEvidence(withInterruptions.Utility.Evidence, "interruptions 3") {
+		t.Fatalf("evidence = %#v, want %q recorded", withInterruptions.Utility.Evidence, "interruptions 3")
+	}
+}
+
 func TestScore_JudgeIsBoundedNudge(t *testing.T) {
 	j := 100.0
 	r := Score(Signals{Verification: "failed", Terminated: boolp(false), Success: &j})

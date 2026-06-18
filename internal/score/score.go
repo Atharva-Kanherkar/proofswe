@@ -285,11 +285,13 @@ func deterministicUtilityLogit(s Signals, b Baselines) (float64, []string) {
 		add(-1.2*clamp(rate, 0, 1), fmt.Sprintf("tool error rate %.0f%%", 100*rate))
 	}
 	if s.Turns > int(b.Turns) {
-		extra := s.Turns - int(b.Turns)
 		// Turn count mixes corrective supervision with ordinary product steering.
 		// Keep it as bounded friction evidence instead of letting long but shipped
-		// collaboration dominate the outcome signal.
-		add(-0.055*float64(capInt(extra, 16)), fmt.Sprintf("extra collaborative turns %d", extra))
+		// collaboration dominate the outcome signal. Print the capped count so the
+		// evidence label matches the penalty actually applied (as corrections/
+		// interruptions/rework do above).
+		extra := capInt(s.Turns-int(b.Turns), 16)
+		add(-0.055*float64(extra), fmt.Sprintf("extra collaborative turns %d", extra))
 	}
 
 	return logit, evidence
