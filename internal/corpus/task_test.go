@@ -102,23 +102,30 @@ func TestReproducibilityProblems(t *testing.T) {
 	bad.Repo.BaseCommit = ""
 	bad.Repo.LicenseSPDX = ""
 	bad.Prompts = nil
+	// remote, public, base commit, prompt. License and code-patch are no longer gated.
 	probs := ReproducibilityProblems(FromCapture(bad, score.ExtractedSignals{}, false, nil, "id", "", time.Now()))
-	if len(probs) != 5 {
-		t.Fatalf("expected 5 problems, got %d: %v", len(probs), probs)
+	if len(probs) != 4 {
+		t.Fatalf("expected 4 problems, got %d: %v", len(probs), probs)
 	}
 }
 
-func TestReproducibilityProblemsRequireRedistributablePatch(t *testing.T) {
-	task := FromCapture(reproducibleCapture(), score.ExtractedSignals{}, true, nil, "id", "", time.Now())
-	task.Repo.LicenseSPDX = "GPL-3.0"
-	if probs := ReproducibilityProblems(task); len(probs) != 1 || probs[0] != "license GPL-3.0 is not in the corpus redistribution allowlist" {
-		t.Fatalf("GPL task problems = %v", probs)
+func TestReproducibilityAllowsAnyLicenseAndPatchlessHistory(t *testing.T) {
+	// A non-allowlisted (or absent) license no longer blocks: a public repo is
+	// re-runnable regardless of its LICENSE file.
+	for _, spdx := range []string{"GPL-3.0", "AGPL-3.0", ""} {
+		task := FromCapture(reproducibleCapture(), score.ExtractedSignals{}, true, nil, "id", "", time.Now())
+		task.Repo.LicenseSPDX = spdx
+		if probs := ReproducibilityProblems(task); len(probs) != 0 {
+			t.Fatalf("license %q flagged as non-reproducible: %v", spdx, probs)
+		}
 	}
 
-	task = FromCapture(reproducibleCapture(), score.ExtractedSignals{}, true, nil, "id", "", time.Now())
+	// A historical session whose work is already committed (clean tree -> no
+	// patch) is still reproducible from remote + base commit + prompt.
+	task := FromCapture(reproducibleCapture(), score.ExtractedSignals{}, true, nil, "id", "", time.Now())
 	task.Code = Code{}
-	if probs := ReproducibilityProblems(task); len(probs) != 1 || probs[0] != "no code patch — publish before committing or supply a diff-backed task" {
-		t.Fatalf("patchless task problems = %v", probs)
+	if probs := ReproducibilityProblems(task); len(probs) != 0 {
+		t.Fatalf("patchless historical task flagged: %v", probs)
 	}
 }
 

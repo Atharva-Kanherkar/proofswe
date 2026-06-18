@@ -70,11 +70,12 @@ func TestContributeEmitsReproducibleTask(t *testing.T) {
 	}
 }
 
-func TestContributeRefusesReproducibleMetadataWithoutPatch(t *testing.T) {
+func TestContributeAllowsReproducibleMetadataWithoutPatch(t *testing.T) {
 	gitAvailable(t)
 	repo := t.TempDir()
-	initRepo(t, repo) // clean repo: no agent-produced diff to publish
+	initRepo(t, repo) // clean repo: committed work, no uncommitted agent diff
 
+	out := filepath.Join(t.TempDir(), "task.json")
 	cfg := Config{
 		HomeDir: t.TempDir(),
 		WorkDir: repo,
@@ -84,12 +85,27 @@ func TestContributeRefusesReproducibleMetadataWithoutPatch(t *testing.T) {
 	}
 	transcript := contributeTranscript(t, "add a feature to keep.txt")
 
-	err := runContributeCommand(cfg, []string{"--print", transcript})
-	if err == nil {
-		t.Fatal("expected refusal for a task without a code patch")
+	// A historical session (clean tree -> no captured patch) on a public repo is
+	// reproducible from remote + base commit + prompt; contribute must accept it.
+	if err := runContributeCommand(cfg, []string{"--out", out, transcript}); err != nil {
+		t.Fatalf("patchless reproducible task refused: %v", err)
 	}
-	if !strings.Contains(err.Error(), "reproducible") {
-		t.Errorf("unexpected error: %v", err)
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read task.json: %v", err)
+	}
+	var task corpus.Task
+	if err := json.Unmarshal(data, &task); err != nil {
+		t.Fatalf("task.json is not valid: %v", err)
+	}
+	if probs := corpus.ReproducibilityProblems(task); len(probs) != 0 {
+		t.Fatalf("patchless task flagged non-reproducible: %v", probs)
+	}
+	if task.Code.Patch != "" {
+		t.Errorf("expected empty patch for a clean tree, got %q", task.Code.Patch)
+	}
+	if len(task.Prompts) == 0 {
+		t.Errorf("prompt not captured")
 	}
 }
 

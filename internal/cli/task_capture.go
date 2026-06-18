@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Atharva-Kanherkar/proofswe/internal/core"
-	"github.com/Atharva-Kanherkar/proofswe/internal/corpus"
 	"github.com/Atharva-Kanherkar/proofswe/internal/hashing"
 	"github.com/Atharva-Kanherkar/proofswe/internal/reader"
 	"github.com/Atharva-Kanherkar/proofswe/internal/redact"
@@ -469,11 +468,11 @@ func detectLicenseSPDX(root string) string {
 	return ""
 }
 
+// repoAllowsRawCode reports whether raw added-line code may be published for
+// this repo. Any public repo with a remote and a base commit qualifies; the
+// license is recorded for provenance but no longer gates inclusion.
 func repoAllowsRawCode(repo core.TaskRepo) bool {
-	if repo.RemoteURL == "" || repo.BaseCommit == "" || repo.LicenseSPDX == "" || !repo.IsPublic {
-		return false
-	}
-	return corpus.PermitsCodeRedistribution(repo.LicenseSPDX)
+	return repo.RemoteURL != "" && repo.BaseCommit != "" && repo.IsPublic
 }
 
 func isPublicRemote(remote string) bool {

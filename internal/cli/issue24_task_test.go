@@ -328,12 +328,14 @@ func TestWorkForHireRepoScope(t *testing.T) {
 	}
 }
 
-func TestLicenseAllowlistGate(t *testing.T) {
+func TestRawCodeLicenseIndependentForPublicRepos(t *testing.T) {
+	// License no longer gates raw-code inclusion: any public repo with a remote
+	// and base commit qualifies, whatever its LICENSE (or lack of one).
 	for _, tc := range []struct {
 		spdx string
 		want bool
 	}{
-		{"MIT", true}, {"Apache-2.0", true}, {"GPL-3.0", false}, {"AGPL-3.0", false}, {"", false}, {"UNKNOWN", false},
+		{"MIT", true}, {"Apache-2.0", true}, {"GPL-3.0", true}, {"AGPL-3.0", true}, {"", true}, {"UNKNOWN", true},
 	} {
 		t.Run(tc.spdx, func(t *testing.T) {
 			got := repoAllowsRawCode(core.TaskRepo{RemoteURL: "https://github.com/public/repo", BaseCommit: "abc", IsPublic: true, LicenseSPDX: tc.spdx})

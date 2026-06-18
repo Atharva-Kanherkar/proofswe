@@ -4,7 +4,7 @@
 // drops the salted hashes, consent bookkeeping, and internal ids, and keeps only
 // what makes a session a re-runnable, displayable benchmark item:
 //
-//   - the starting repo state (remote + base commit + license) so anyone can
+//   - the starting repo state (remote + base commit) so anyone can
 //     `git clone && git checkout` into the exact conditions the session began,
 //   - the developer's prompts (the ambiguous, oracle-less ask),
 //   - the agent's trajectory (assistant turns + tool calls/outputs),
@@ -45,9 +45,10 @@ type Task struct {
 	Scrub               Scrub      `json:"scrub"`
 }
 
-// Repo is the starting state needed to reproduce the task. A task is only
-// reproducible when RemoteURL, BaseCommit, and a permissive LicenseSPDX are all
-// present and the remote is public — see ReproducibilityProblems.
+// Repo is the starting state needed to reproduce the task. A task is
+// reproducible when RemoteURL and BaseCommit are present and the remote is
+// public — see ReproducibilityProblems. LicenseSPDX is recorded for provenance
+// but is not required (many public repos ship no LICENSE file).
 type Repo struct {
 	RemoteURL   string `json:"remote_url"`
 	BaseCommit  string `json:"base_commit"`
@@ -78,7 +79,9 @@ type Transcript struct {
 }
 
 // Code is the work product: the added lines, split by solution vs test, plus the
-// touched-file list. Present only for license-permissive public repos.
+// touched-file list. Captured for public repos when the working tree has a diff;
+// optional — a historical session from a clean tree still submits (the work is
+// preserved in the trajectory). See repoAllowsRawCode / ReproducibilityProblems.
 type Code struct {
 	Patch     string `json:"patch,omitempty"`
 	TestPatch string `json:"test_patch,omitempty"`
@@ -253,16 +256,13 @@ func ReproducibilityProblems(t Task) []string {
 	if t.Repo.BaseCommit == "" {
 		problems = append(problems, "no base commit — the starting state is unknown")
 	}
-	if t.Repo.LicenseSPDX == "" {
-		problems = append(problems, "no detected OSI license — code cannot be redistributed")
-	} else if !PermitsCodeRedistribution(t.Repo.LicenseSPDX) {
-		problems = append(problems, "license "+t.Repo.LicenseSPDX+" is not in the corpus redistribution allowlist")
-	}
 	if len(t.Prompts) == 0 {
 		problems = append(problems, "no developer prompt — there is no task statement")
 	}
-	if t.Code.Patch == "" && t.Code.TestPatch == "" {
-		problems = append(problems, "no code patch — publish before committing or supply a diff-backed task")
-	}
+	// License is recorded for provenance but not gated: a public repo without a
+	// LICENSE file is still re-runnable (clone + checkout + prompt). And a code
+	// patch is no longer required — a historical session whose work is already
+	// committed (clean working tree) carries its trajectory and is reproducible
+	// from remote + base commit + prompt. The patch is captured when present.
 	return problems
 }
