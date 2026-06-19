@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import Markdown from "./markdown";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_PROOFSWE_API_URL ?? "https://api.proofswe.com";
@@ -37,8 +38,6 @@ type Detail = {
   title?: string;
   score: number;
   published_at: string;
-  task_statement?: string;
-  follow_ups?: number;
   outcome?: Outcome;
   axes?: Axis[];
   utility?: Utility;
@@ -56,6 +55,12 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function scoreTone(score: number): string {
+  if (score >= 70) return "good";
+  if (score >= 45) return "mid";
+  return "bad";
+}
+
 function outcomeChips(outcome: Outcome): { label: string; tone: string }[] {
   const chips: { label: string; tone: string }[] = [];
   if (outcome.verification === "passed")
@@ -65,7 +70,7 @@ function outcomeChips(outcome: Outcome): { label: string; tone: string }[] {
   else chips.push({ label: "no tests run", tone: "muted" });
   chips.push(
     outcome.landed
-      ? { label: "landed (commit/PR)", tone: "good" }
+      ? { label: "landed", tone: "good" }
       : { label: "not landed", tone: "muted" },
   );
   if (outcome.termination === "clean")
@@ -78,12 +83,12 @@ function outcomeChips(outcome: Outcome): { label: string; tone: string }[] {
       tone: "bad",
     });
   if (outcome.human_acceptances)
-    chips.push({ label: "developer approved", tone: "good" });
+    chips.push({ label: "approved", tone: "good" });
   if (outcome.interruptions)
     chips.push({ label: `${outcome.interruptions} interrupted`, tone: "bad" });
   if (outcome.files_touched)
     chips.push({
-      label: `${outcome.files_touched} file${outcome.files_touched > 1 ? "s" : ""} touched`,
+      label: `${outcome.files_touched} file${outcome.files_touched > 1 ? "s" : ""}`,
       tone: "muted",
     });
   for (const skill of outcome.skills_used ?? [])
@@ -91,30 +96,95 @@ function outcomeChips(outcome: Outcome): { label: string; tone: string }[] {
   return chips;
 }
 
-const ROLE_LABEL: Record<string, string> = {
-  developer: "Developer",
-  assistant: "Assistant",
-  tool_call: "Tool call",
-  tool_output: "Tool output",
-};
-
-function ConversationTurn({ turn }: { turn: Turn }) {
-  const isCode = turn.role === "tool_call" || turn.role === "tool_output";
+// isContextBlob flags harness-injected context/instruction turns so they can be
+// collapsed by default and stay out of the way of the real conversation.
+function isContextBlob(text: string): boolean {
+  const s = text.trimStart().toLowerCase();
   return (
-    <div className={`turn turn-${turn.role}`}>
-      <div className="turn-head">
-        <span className="turn-role">{ROLE_LABEL[turn.role] ?? turn.role}</span>
+    s.startsWith("# agents.md") ||
+    s.startsWith("<environment_context") ||
+    s.startsWith("<user_instructions") ||
+    s.startsWith("<system-reminder") ||
+    s.startsWith("<local-command") ||
+    s.startsWith("<command-") ||
+    (s.includes("## skills") && s.includes("skill.md"))
+  );
+}
+
+function CodeBlock({ text }: { text: string }) {
+  return (
+    <pre className="code-block">
+      <code>{text}</code>
+    </pre>
+  );
+}
+
+function lineCount(text: string): number {
+  return text ? text.split("\n").length : 0;
+}
+
+function ToolCall({ turn }: { turn: Turn }) {
+  return (
+    <details className="turn turn-tool" open>
+      <summary>
+        <span className="turn-icon">⚙</span>
+        <span className="turn-role">Tool call</span>
         {turn.name ? <span className="turn-name">{turn.name}</span> : null}
+      </summary>
+      <CodeBlock text={turn.text} />
+    </details>
+  );
+}
+
+function ToolOutput({ turn }: { turn: Turn }) {
+  return (
+    <details className="turn turn-output">
+      <summary>
+        <span className="turn-icon">↳</span>
+        <span className="turn-role">Output</span>
+        {turn.name ? <span className="turn-name">{turn.name}</span> : null}
+        <span className="turn-hint">{lineCount(turn.text)} lines</span>
+      </summary>
+      <CodeBlock text={turn.text} />
+    </details>
+  );
+}
+
+function ProseTurn({ turn }: { turn: Turn }) {
+  const isDev = turn.role === "developer";
+  const context = isDev && isContextBlob(turn.text);
+  const label = isDev ? "Developer" : "Assistant";
+  const body = <Markdown>{turn.text}</Markdown>;
+
+  if (context) {
+    return (
+      <details className="turn turn-context">
+        <summary>
+          <span className="turn-role">{label}</span>
+          <span className="turn-hint">session context / instructions</span>
+        </summary>
+        {body}
+      </details>
+    );
+  }
+
+  return (
+    <div className={`turn turn-prose turn-${turn.role}`}>
+      <div className="turn-head">
+        <span className="turn-avatar" aria-hidden="true">
+          {isDev ? "you" : "ai"}
+        </span>
+        <span className="turn-role">{label}</span>
       </div>
-      {isCode ? (
-        <pre className="turn-code">
-          <code>{turn.text}</code>
-        </pre>
-      ) : (
-        <div className="turn-text">{turn.text}</div>
-      )}
+      {body}
     </div>
   );
+}
+
+function ConversationTurn({ turn }: { turn: Turn }) {
+  if (turn.role === "tool_call") return <ToolCall turn={turn} />;
+  if (turn.role === "tool_output") return <ToolOutput turn={turn} />;
+  return <ProseTurn turn={turn} />;
 }
 
 export default function TranscriptView({ id }: { id: string }) {
@@ -156,28 +226,24 @@ export default function TranscriptView({ id }: { id: string }) {
       </p>
     );
   }
-  if (status === "notfound") {
+  if (status === "notfound" || status === "error" || !data) {
     return (
       <div className="transcript-empty">
-        <p className="leaderboard-state">This session was not found.</p>
         <Link href="/leaderboard" className="back-link">
-          ← Back to leaderboard
+          ← Leaderboard
         </Link>
-      </div>
-    );
-  }
-  if (status === "error" || !data) {
-    return (
-      <div className="transcript-empty">
-        <p className="leaderboard-state">Could not load this session.</p>
-        <Link href="/leaderboard" className="back-link">
-          ← Back to leaderboard
-        </Link>
+        <p className="leaderboard-state">
+          {status === "notfound"
+            ? "This session was not found."
+            : "Could not load this session."}
+        </p>
       </div>
     );
   }
 
   const u = data.utility ?? {};
+  const turns = data.conversation ?? [];
+
   return (
     <article className="transcript">
       <Link href="/leaderboard" className="back-link">
@@ -185,10 +251,14 @@ export default function TranscriptView({ id }: { id: string }) {
       </Link>
 
       <header className="transcript-header">
-        <div className="transcript-score" aria-label={`Score ${data.score}`}>
+        <div
+          className={`transcript-score score-${scoreTone(data.score)}`}
+          aria-label={`Score ${data.score}`}
+        >
           {data.score}
+          <small>/ 100</small>
         </div>
-        <div>
+        <div className="transcript-headmain">
           <h1>{data.title || "Session transcript"}</h1>
           <p className="transcript-meta">
             <strong>{data.model || "unknown"}</strong>
@@ -198,70 +268,48 @@ export default function TranscriptView({ id }: { id: string }) {
               {formatDate(data.published_at)}
             </time>
           </p>
+          {data.outcome ? (
+            <div className="chip-row">
+              {outcomeChips(data.outcome).map((chip, i) => (
+                <span key={i} className={`chip chip-${chip.tone}`}>
+                  {chip.label}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
       </header>
 
-      {data.outcome ? (
-        <div className="chip-row">
-          {outcomeChips(data.outcome).map((chip, i) => (
-            <span key={i} className={`chip chip-${chip.tone}`}>
-              {chip.label}
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="transcript-grid">
-        <section className="transcript-main">
-          <h2 className="block-label">Conversation</h2>
-          {data.conversation && data.conversation.length > 0 ? (
-            <div className="conversation">
-              {data.conversation.map((turn, i) => (
-                <ConversationTurn key={i} turn={turn} />
-              ))}
-            </div>
-          ) : (
-            <p className="leaderboard-state">
-              No transcript text was captured for this session.
-            </p>
-          )}
-        </section>
-
-        <aside className="transcript-side">
-          {data.axes && data.axes.length > 0 ? (
-            <div className="side-block">
-              <h2 className="block-label">Score breakdown</h2>
-              <div className="axis-list">
-                {data.axes.map((axis) => (
-                  <div className="axis-row" key={axis.name}>
-                    <div className="axis-head">
-                      <span className="axis-name">{axis.name}</span>
-                      <span className="axis-score">{axis.score}</span>
-                    </div>
-                    <div className="axis-bar">
-                      <span
-                        style={{
-                          width: `${Math.max(0, Math.min(100, axis.score))}%`,
-                        }}
-                      />
-                    </div>
-                    {axis.detail ? (
-                      <p className="axis-detail">{axis.detail}</p>
-                    ) : null}
-                  </div>
-                ))}
+      {data.axes && data.axes.length > 0 ? (
+        <section className="scorecard">
+          <div className="axis-grid">
+            {data.axes.map((axis) => (
+              <div className="axis-cell" key={axis.name}>
+                <div className="axis-head">
+                  <span className="axis-name">{axis.name}</span>
+                  <span className="axis-score">{axis.score}</span>
+                </div>
+                <div className="axis-bar">
+                  <span
+                    style={{
+                      width: `${Math.max(0, Math.min(100, axis.score))}%`,
+                    }}
+                  />
+                </div>
+                {axis.detail ? (
+                  <p className="axis-detail">{axis.detail}</p>
+                ) : null}
               </div>
-            </div>
-          ) : null}
-
+            ))}
+          </div>
           {u.evidence && u.evidence.length > 0 ? (
-            <div className="side-block">
-              <h2 className="block-label">
+            <details className="why">
+              <summary>
                 Why this score
                 {u.confidence ? (
                   <span className="confidence-tag">{u.confidence}</span>
                 ) : null}
-              </h2>
+              </summary>
               <ul className="evidence-list">
                 {u.evidence.map((line, i) => (
                   <li key={i}>{line}</li>
@@ -275,36 +323,46 @@ export default function TranscriptView({ id }: { id: string }) {
                   ? ` · judge ${u.judge_nudge > 0 ? "+" : ""}${u.judge_nudge}`
                   : null}
               </p>
-            </div>
+            </details>
           ) : null}
-
           {data.github_url || data.github_pr_url ? (
-            <div className="side-block">
-              <h2 className="block-label">Evidence</h2>
-              <div className="session-links">
-                {data.github_url ? (
-                  <a
-                    href={data.github_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Corpus task JSON ↗
-                  </a>
-                ) : null}
-                {data.github_pr_url ? (
-                  <a
-                    href={data.github_pr_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Publication PR ↗
-                  </a>
-                ) : null}
-              </div>
+            <div className="session-links">
+              {data.github_url ? (
+                <a href={data.github_url} target="_blank" rel="noopener noreferrer">
+                  Corpus task JSON ↗
+                </a>
+              ) : null}
+              {data.github_pr_url ? (
+                <a
+                  href={data.github_pr_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Publication PR ↗
+                </a>
+              ) : null}
             </div>
           ) : null}
-        </aside>
-      </div>
+        </section>
+      ) : null}
+
+      <section className="conversation-wrap">
+        <div className="conversation-heading">
+          <h2>Conversation</h2>
+          <span>{turns.length} turns</span>
+        </div>
+        {turns.length > 0 ? (
+          <div className="conversation">
+            {turns.map((turn, i) => (
+              <ConversationTurn key={i} turn={turn} />
+            ))}
+          </div>
+        ) : (
+          <p className="leaderboard-state">
+            No transcript text was captured for this session.
+          </p>
+        )}
+      </section>
     </article>
   );
 }
