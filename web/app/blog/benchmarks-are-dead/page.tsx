@@ -2,12 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Benchmarks Are Dead",
+  title: "The Next Unit of AI Evaluation Is the Session, not Benchmarks.",
   description:
     "Every lab tops the benchmark. Real software work still feels hard. ProofSWE is built for the session, not the one shot.",
   alternates: { canonical: "/blog/benchmarks-are-dead" },
   openGraph: {
-    title: "Benchmarks Are Dead",
+    title: "The Next Unit of AI Evaluation Is the Session, not Benchmarks.",
     description:
       "Every lab tops the benchmark. Real software work still feels hard. ProofSWE is built for the session.",
     type: "article",
@@ -22,7 +22,7 @@ export default function BenchmarksAreDeadPage() {
           <Link href="/blog" className="blog-kicker">
             Blog
           </Link>
-          <h1>Benchmarks Are Dead</h1>
+          <h1>The Next Unit of AI Evaluation Is the Session, not Benchmarks.</h1>
           <p className="blog-dek">
             Every day a new model is released, and every day it somehow tops the
             benchmark. Then you ask it to do real work, and the story gets messy.

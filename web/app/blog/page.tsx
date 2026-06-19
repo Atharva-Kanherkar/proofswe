@@ -9,29 +9,31 @@ export const metadata: Metadata = {
 
 export default function BlogPage() {
   return (
-    <main className="flex min-h-svh flex-col items-center justify-center px-6 py-20 text-center">
-      <div className="rise max-w-2xl" style={{ animationDelay: "0.05s" }}>
-        <Link href="/" className="hero-link inline-flex">
+    <main className="blog-index-shell">
+      <div className="blog-index rise" style={{ animationDelay: "0.05s" }}>
+        <Link href="/" className="blog-kicker">
           ProofSWE
         </Link>
 
-        <h1 className="hero-tagline mt-8">Blog</h1>
+        <header className="blog-index-header">
+          <h1>Blog</h1>
+          <p>
+            Notes on coding agents, software engineering evaluation, and proof.
+          </p>
+        </header>
 
-        <p className="hero-sub mt-4">
-          Notes on coding agents, software engineering evaluation, and proof.
-        </p>
-
-        <Link
-          href="/blog/benchmarks-are-dead"
-          className="blog-card mt-10 text-left"
-        >
-          <span className="blog-card-kicker">Essay</span>
-          <span className="blog-card-title">Benchmarks Are Dead</span>
-          <span className="blog-card-desc">
-            Every lab tops the benchmark. Real software work still feels hard.
-            The next benchmark has to be the session.
-          </span>
-        </Link>
+        <div className="blog-list" aria-label="All blog posts">
+          <Link href="/blog/benchmarks-are-dead" className="blog-card">
+            <span className="blog-card-meta">Essay · June 19, 2026</span>
+            <span className="blog-card-title">
+              The Next Unit of AI Evaluation Is the Session, not Benchmarks.
+            </span>
+            <span className="blog-card-desc">
+              Every lab tops the benchmark. Real software work still feels hard.
+              The next benchmark has to be the session.
+            </span>
+          </Link>
+        </div>
       </div>
     </main>
   );
