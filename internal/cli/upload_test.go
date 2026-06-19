@@ -163,9 +163,18 @@ func TestUploadCommandSubmitsSelectedTranscriptsInBatches(t *testing.T) {
 	}
 }
 
+func TestUploadClaudeProjectSlugIsFilenameSafe(t *testing.T) {
+	slug := uploadClaudeProjectSlug(`C:\Users\runneradmin\repo`)
+	for _, invalid := range []string{":", "<", ">", `"`, "|", "?", "*"} {
+		if strings.Contains(slug, invalid) {
+			t.Fatalf("slug %q contains invalid path character %q", slug, invalid)
+		}
+	}
+}
+
 func writeUploadClaudeTranscript(t *testing.T, home, repo, sessionID, prompt string) string {
 	t.Helper()
-	slug := strings.ReplaceAll(filepath.ToSlash(canonicalSubmitPath(repo)), "/", "-")
+	slug := uploadClaudeProjectSlug(repo)
 	path := filepath.Join(home, ".claude", "projects", slug, sessionID+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -179,6 +188,11 @@ func writeUploadClaudeTranscript(t *testing.T, home, repo, sessionID, prompt str
 		t.Fatal(err)
 	}
 	return path
+}
+
+func uploadClaudeProjectSlug(repo string) string {
+	slug := strings.ReplaceAll(filepath.ToSlash(canonicalSubmitPath(repo)), "/", "-")
+	return strings.NewReplacer(":", "-", "<", "-", ">", "-", `"`, "-", "|", "-", "?", "-", "*", "-").Replace(slug)
 }
 
 func writeUploadCodexTranscript(t *testing.T, home, repo, sessionID string) string {
