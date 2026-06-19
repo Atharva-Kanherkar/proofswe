@@ -7,6 +7,7 @@
 - Only published submissions with scorecards and GitHub corpus mappings are included by default.
 - Query parameters support `limit`, `harness`, and `model`; invalid limits fail with a 400.
 - The endpoint never returns raw prompts, assistant transcript text, tool outputs, code patches, or raw task JSON.
+- `/leaderboard` renders model rankings and recent scorecard summaries with direct links to the corpus transcript and publication PR.
 
 ## Unit Tests
 - `TestMemorySubmissionStore_ListsPublishedCorpusFeedAndLeaderboard` — published mapped submissions become recent rows and model aggregate rows.
@@ -22,7 +23,7 @@
 - `go test ./...` must pass.
 
 ## E2E Tests
-N/A — this PR exposes the backend JSON contract for the static site; browser rendering can be added in the web app PR.
+- The Next.js production build renders the `/leaderboard` route without requiring the API to be online at build time.
 
 ## Manual / cURL Tests
 - `curl http://localhost:8080/v1/leaderboard`
