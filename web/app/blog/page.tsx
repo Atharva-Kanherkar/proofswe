@@ -28,8 +28,8 @@ export default function BlogPage() {
           <span className="blog-card-kicker">Essay</span>
           <span className="blog-card-title">Benchmarks Are Dead</span>
           <span className="blog-card-desc">
-            Why coding benchmark leaderboards are useful signals, but weak proof
-            that software engineering is solved.
+            Every lab tops the benchmark. Real software work still feels hard.
+            The next benchmark has to be the session.
           </span>
         </Link>
       </div>
