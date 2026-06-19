@@ -21,6 +21,8 @@
 ## Smoke Tests
 - `go test ./internal/cli` must pass.
 - `go test ./...` must pass.
+- `golangci-lint run` must pass without unchecked resource-close errors.
+- Vercel must use `web/` as the project root and complete the Next.js production build.
 
 ## E2E Tests
 - The Next.js production build renders the `/leaderboard` route without requiring the API to be online at build time.
