@@ -12,6 +12,9 @@ export default function SiteNav() {
         </Link>
 
         <div className="site-nav-links">
+          <Link href="/leaderboard" className="site-nav-link">
+            Leaderboard
+          </Link>
           <Link href="/blog" className="site-nav-link">
             Blog
           </Link>
