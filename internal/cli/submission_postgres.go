@@ -190,6 +190,22 @@ func (s *postgresSubmissionStore) GetSubmission(ctx context.Context, submissionI
 	return rec, true, nil
 }
 
+func (s *postgresSubmissionStore) GetTaskByID(ctx context.Context, taskID string) (corpus.Task, bool, error) {
+	var taskJSON string
+	err := s.db.QueryRowContext(ctx, `SELECT task_json::text FROM tasks WHERE task_id = $1`, taskID).Scan(&taskJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return corpus.Task{}, false, nil
+	}
+	if err != nil {
+		return corpus.Task{}, false, err
+	}
+	var task corpus.Task
+	if err := json.Unmarshal([]byte(taskJSON), &task); err != nil {
+		return corpus.Task{}, false, fmt.Errorf("decode task: %w", err)
+	}
+	return task, true, nil
+}
+
 func (s *postgresSubmissionStore) ListPublishedCorpus(ctx context.Context, q publishedCorpusQuery) ([]publishedCorpusRecord, error) {
 	args := []any{submissionStatusPubDone}
 	var filters []string

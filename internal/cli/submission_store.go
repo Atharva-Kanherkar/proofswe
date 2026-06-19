@@ -39,6 +39,7 @@ const (
 type submissionStore interface {
 	CreateSubmission(context.Context, submitRequest) (submissionRecord, error)
 	GetSubmission(context.Context, string) (submissionRecord, bool, error)
+	GetTaskByID(context.Context, string) (corpus.Task, bool, error)
 	ListPublishedCorpus(context.Context, publishedCorpusQuery) ([]publishedCorpusRecord, error)
 	ListPublishedModelStats(context.Context, publishedCorpusQuery) ([]publishedModelRecord, error)
 	ClaimJudgeJob(context.Context, string, time.Time) (judgeJobRecord, bool, error)
@@ -253,6 +254,13 @@ func (s *memorySubmissionStore) GetSubmission(_ context.Context, submissionID st
 	defer s.mu.Unlock()
 	rec, ok := s.submissions[submissionID]
 	return rec, ok, nil
+}
+
+func (s *memorySubmissionStore) GetTaskByID(_ context.Context, taskID string) (corpus.Task, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task, ok := s.tasks[taskID]
+	return task, ok, nil
 }
 
 func (s *memorySubmissionStore) ListPublishedCorpus(_ context.Context, q publishedCorpusQuery) ([]publishedCorpusRecord, error) {

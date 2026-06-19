@@ -30,6 +30,7 @@ type leaderboardSubmission struct {
 	Model           string    `json:"model"`
 	Contributor     string    `json:"contributor,omitempty"`
 	Repo            string    `json:"repo,omitempty"`
+	Title           string    `json:"title,omitempty"`
 	Score           float64   `json:"score"`
 	ScoreVersion    string    `json:"score_version,omitempty"`
 	Summary         string    `json:"summary,omitempty"`
@@ -89,34 +90,10 @@ func buildLeaderboardResponse(records []publishedCorpusRecord, modelRecords []pu
 	resp := leaderboardResponse{GeneratedAt: now.UTC()}
 
 	for _, record := range records {
-		rec := record.Submission
-		if rec.Scorecard == nil {
+		if record.Submission.Scorecard == nil {
 			continue
 		}
-		item := leaderboardSubmission{
-			SubmissionID:    rec.SubmissionID,
-			TaskID:          rec.TaskID,
-			Harness:         record.Harness,
-			Model:           record.Model,
-			Contributor:     rec.Contributor,
-			Repo:            publicRepoName(record.RepoURL),
-			Score:           roundScore(rec.Scorecard.Composite),
-			ScoreVersion:    rec.Scorecard.ScoreVersion,
-			Summary:         publicScorecardSummary(rec.Scorecard),
-			GitHubPath:      rec.GitHubPath,
-			GitHubURL:       githubCorpusURL(rec.GitHubPRURL, rec.GitHubCommit, rec.GitHubPath),
-			GitHubPRURL:     rec.GitHubPRURL,
-			GitHubCommitSHA: rec.GitHubCommit,
-			SubmittedAt:     rec.CreatedAt.UTC(),
-			PublishedAt:     rec.UpdatedAt.UTC(),
-			TaskStatement:   taskStatement(record.Task),
-			FollowUps:       followUpCount(record.Task),
-			Outcome:         leaderboardOutcomeFrom(record.Task),
-			Axes:            leaderboardAxesFrom(rec.Scorecard),
-			Utility:         rec.Scorecard.Utility,
-			Note:            rec.Scorecard.Note,
-		}
-		resp.Recent = append(resp.Recent, item)
+		resp.Recent = append(resp.Recent, buildLeaderboardItem(record))
 	}
 
 	for _, item := range modelRecords {
@@ -207,6 +184,196 @@ func publicScorecardSummary(card *submitScorecard) string {
 		return strings.Join(parts, "; ")
 	}
 	return strings.TrimSpace(card.Note)
+}
+
+// leaderboardDetail is the full per-transcript view: the leaderboard item plus
+// the entire ordered conversation (developer prompts, assistant messages, tool
+// calls and their outputs) so the page can render the whole session.
+type leaderboardDetail struct {
+	leaderboardSubmission
+	Conversation []conversationTurn `json:"conversation,omitempty"`
+}
+
+// conversationTurn is one rendered line of the session, in chronological order.
+type conversationTurn struct {
+	Role string `json:"role"` // developer | assistant | tool_call | tool_output
+	Name string `json:"name,omitempty"`
+	Text string `json:"text"`
+}
+
+// buildLeaderboardItem maps one published record into the list/detail shape,
+// shared by the feed and the single-transcript endpoint so they never diverge.
+func buildLeaderboardItem(record publishedCorpusRecord) leaderboardSubmission {
+	rec := record.Submission
+	item := leaderboardSubmission{
+		SubmissionID:    rec.SubmissionID,
+		TaskID:          rec.TaskID,
+		Harness:         record.Harness,
+		Model:           record.Model,
+		Contributor:     rec.Contributor,
+		Repo:            publicRepoName(record.RepoURL),
+		Title:           deriveTitle(record.Task),
+		GitHubPath:      rec.GitHubPath,
+		GitHubURL:       githubCorpusURL(rec.GitHubPRURL, rec.GitHubCommit, rec.GitHubPath),
+		GitHubPRURL:     rec.GitHubPRURL,
+		GitHubCommitSHA: rec.GitHubCommit,
+		SubmittedAt:     rec.CreatedAt.UTC(),
+		PublishedAt:     rec.UpdatedAt.UTC(),
+		TaskStatement:   taskStatement(record.Task),
+		FollowUps:       followUpCount(record.Task),
+		Outcome:         leaderboardOutcomeFrom(record.Task),
+	}
+	if rec.Scorecard != nil {
+		item.Score = roundScore(rec.Scorecard.Composite)
+		item.ScoreVersion = rec.Scorecard.ScoreVersion
+		item.Summary = outcomeSummary(record.Task, rec.Scorecard)
+		item.Axes = leaderboardAxesFrom(rec.Scorecard)
+		item.Utility = rec.Scorecard.Utility
+		item.Note = rec.Scorecard.Note
+	}
+	return item
+}
+
+// buildLeaderboardDetail adds the full ordered conversation to a list item.
+func buildLeaderboardDetail(record publishedCorpusRecord) leaderboardDetail {
+	return leaderboardDetail{
+		leaderboardSubmission: buildLeaderboardItem(record),
+		Conversation:          buildConversation(record.Task),
+	}
+}
+
+const (
+	maxTurnTextChars     = 16000
+	maxToolOutputChars   = 6000
+	maxConversationTurns = 600
+)
+
+// buildConversation merges prompts, assistant messages, tool calls and outputs
+// into one chronological stream, ordered by turn index then by kind so a turn
+// reads prompt → assistant → tool call → tool output.
+func buildConversation(task corpus.Task) []conversationTurn {
+	type ordered struct {
+		idx, kind, seq int
+		role, name     string
+		text           string
+	}
+	var rows []ordered
+	seq := 0
+	add := func(idx, kind int, role, name, text string) {
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+		rows = append(rows, ordered{idx: idx, kind: kind, seq: seq, role: role, name: name, text: text})
+		seq++
+	}
+	for _, p := range task.Prompts {
+		add(p.TurnIndex, 0, "developer", "", p.Text)
+	}
+	for _, m := range task.Transcript.AssistantMessages {
+		add(m.TurnIndex, 1, "assistant", m.Name, m.Text)
+	}
+	for _, m := range task.Transcript.ToolCalls {
+		add(m.TurnIndex, 2, "tool_call", m.Name, m.Text)
+	}
+	for _, m := range task.Transcript.ToolOutputs {
+		add(m.TurnIndex, 3, "tool_output", m.Name, m.Text)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].idx != rows[j].idx {
+			return rows[i].idx < rows[j].idx
+		}
+		if rows[i].kind != rows[j].kind {
+			return rows[i].kind < rows[j].kind
+		}
+		return rows[i].seq < rows[j].seq
+	})
+	out := make([]conversationTurn, 0, len(rows))
+	for _, r := range rows {
+		limit := maxTurnTextChars
+		if r.kind == 3 {
+			limit = maxToolOutputChars
+		}
+		out = append(out, conversationTurn{Role: r.role, Name: r.name, Text: truncateRunes(r.text, limit)})
+		if len(out) >= maxConversationTurns {
+			break
+		}
+	}
+	return out
+}
+
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "\n… [truncated]"
+}
+
+// deriveTitle picks a short, human title for the session: the first developer
+// prompt that is a real ask rather than an injected instructions/agent blob.
+func deriveTitle(task corpus.Task) string {
+	for _, p := range task.Prompts {
+		t := strings.TrimSpace(p.Text)
+		if t == "" || looksLikeInstructions(t) {
+			continue
+		}
+		return firstLine(t, 90)
+	}
+	if len(task.Prompts) > 0 {
+		return firstLine(strings.TrimSpace(task.Prompts[0].Text), 90)
+	}
+	return "Untitled session"
+}
+
+func looksLikeInstructions(t string) bool {
+	lower := strings.ToLower(t)
+	for _, marker := range []string{"agents.md", "<instructions>", "<system-reminder>", "base directory for this skill", "claude.md instructions"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstLine(t string, max int) string {
+	if i := strings.IndexByte(t, '\n'); i >= 0 {
+		t = t[:i]
+	}
+	t = strings.TrimSpace(strings.TrimLeft(t, "#> -*"))
+	if r := []rune(t); len(r) > max {
+		return strings.TrimSpace(string(r[:max])) + "…"
+	}
+	return t
+}
+
+// outcomeSummary is a one-line, human read of what happened in the session.
+func outcomeSummary(task corpus.Task, card *submitScorecard) string {
+	o := task.Outcome
+	var parts []string
+	switch o.Verification {
+	case "passed":
+		parts = append(parts, "tests passed")
+	case "failed":
+		parts = append(parts, "tests failed")
+	default:
+		parts = append(parts, "no tests run")
+	}
+	if o.Landed {
+		parts = append(parts, "changes landed")
+	}
+	switch o.Termination {
+	case "clean":
+		parts = append(parts, "clean finish")
+	case "abandoned":
+		parts = append(parts, "abandoned")
+	}
+	if o.HumanCorrections > 0 {
+		parts = append(parts, fmt.Sprintf("%d correction(s)", o.HumanCorrections))
+	}
+	if len(parts) == 0 && card != nil {
+		return publicScorecardSummary(card)
+	}
+	return strings.Join(parts, " · ")
 }
 
 // taskStatement returns the developer's opening ask — what the session set out
