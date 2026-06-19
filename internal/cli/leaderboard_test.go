@@ -17,6 +17,17 @@ func TestDeriveTitleSkipsInstructionBlobs(t *testing.T) {
 	}
 }
 
+func TestDeriveTitleStripsCodexEnvironmentWrapper(t *testing.T) {
+	// codex wraps its first turn in context blocks; the real ask follows.
+	task := corpus.Task{Prompts: []corpus.Prompt{
+		{TurnIndex: 0, Text: "<environment_context>\ncwd: /repo\nos: linux\n</environment_context>\n\nRefactor the auth middleware to use JWT"},
+	}}
+	got := deriveTitle(task)
+	if got != "Refactor the auth middleware to use JWT" {
+		t.Fatalf("title = %q, want the ask with the env wrapper stripped", got)
+	}
+}
+
 func TestBuildConversationOrdersByTurnThenKind(t *testing.T) {
 	task := corpus.Task{
 		Prompts: []corpus.Prompt{{TurnIndex: 0, Role: "user", Text: "fix the bug"}},

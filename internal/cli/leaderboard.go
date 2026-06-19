@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -309,25 +310,47 @@ func truncateRunes(s string, max int) string {
 	return string(r[:max]) + "\n… [truncated]"
 }
 
-// deriveTitle picks a short, human title for the session: the first developer
-// prompt that is a real ask rather than an injected instructions/agent blob.
-func deriveTitle(task corpus.Task) string {
+// wrapperBlockRe strips harness-injected context/instruction blocks (codex wraps
+// its first turn in <environment_context>/<user_instructions>; Claude Code injects
+// <system-reminder>) so the real developer ask underneath can surface as the title.
+var wrapperBlockRe = regexp.MustCompile(`(?is)<(environment_context|user_instructions|environment_details|system-reminder|instructions)>.*?</(environment_context|user_instructions|environment_details|system-reminder|instructions)>`)
+
+func cleanPromptText(s string) string {
+	return strings.TrimSpace(wrapperBlockRe.ReplaceAllString(s, " "))
+}
+
+// firstRealPrompt returns the first developer turn that is an actual ask rather
+// than an injected instructions/agent/context blob, with wrapper blocks stripped.
+func firstRealPrompt(task corpus.Task) string {
 	for _, p := range task.Prompts {
-		t := strings.TrimSpace(p.Text)
-		if t == "" || looksLikeInstructions(t) {
-			continue
+		t := cleanPromptText(p.Text)
+		if t != "" && !looksLikeInstructions(t) {
+			return t
 		}
-		return firstLine(t, 90)
 	}
 	if len(task.Prompts) > 0 {
-		return firstLine(strings.TrimSpace(task.Prompts[0].Text), 90)
+		return cleanPromptText(task.Prompts[0].Text)
 	}
-	return "Untitled session"
+	return ""
+}
+
+// deriveTitle picks a short, human title for the session from its real ask.
+func deriveTitle(task corpus.Task) string {
+	t := firstRealPrompt(task)
+	if t == "" {
+		return "Untitled session"
+	}
+	return firstLine(t, 90)
 }
 
 func looksLikeInstructions(t string) bool {
-	lower := strings.ToLower(t)
-	for _, marker := range []string{"agents.md", "<instructions>", "<system-reminder>", "base directory for this skill", "claude.md instructions"} {
+	lower := strings.ToLower(strings.TrimSpace(t))
+	for _, prefix := range []string{"<environment_context", "<user_instructions", "<environment_details", "<instructions", "<system-reminder", "# agents.md", "agents.md"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	for _, marker := range []string{"agents.md instructions", "base directory for this skill", "claude.md instructions", "you are claude"} {
 		if strings.Contains(lower, marker) {
 			return true
 		}
@@ -379,14 +402,14 @@ func outcomeSummary(task corpus.Task, card *submitScorecard) string {
 // taskStatement returns the developer's opening ask — what the session set out
 // to do — truncated so the leaderboard payload stays lean.
 func taskStatement(task corpus.Task) string {
-	if len(task.Prompts) == 0 {
+	text := firstRealPrompt(task)
+	if text == "" {
 		return ""
 	}
-	text := strings.TrimSpace(task.Prompts[0].Text)
-	if len(text) <= maxTaskStatementChars {
-		return text
+	if r := []rune(text); len(r) > maxTaskStatementChars {
+		return strings.TrimSpace(string(r[:maxTaskStatementChars])) + "…"
 	}
-	return strings.TrimSpace(text[:maxTaskStatementChars]) + "…"
+	return text
 }
 
 // followUpCount is how many developer turns followed the opening ask — a quick
