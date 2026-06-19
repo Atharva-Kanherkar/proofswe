@@ -236,7 +236,7 @@ LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []publishedCorpusRecord
 	for rows.Next() {
@@ -299,7 +299,7 @@ GROUP BY harness, model
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []publishedModelRecord
 	for rows.Next() {
