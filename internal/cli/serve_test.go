@@ -563,6 +563,49 @@ func TestMemorySubmissionStore_ListsPublishedCorpusFeedAndLeaderboard(t *testing
 	}
 }
 
+// TestMemorySubmissionStore_LatestPublishedTieBreaksBySeq reproduces the coarse
+// clock collision seen on Windows: two submissions for the same task publish
+// within the same OS clock tick, so their UpdatedAt timestamps are identical.
+// The most recently created submission must win deterministically, even when
+// its random SubmissionID sorts before the earlier one's.
+func TestMemorySubmissionStore_LatestPublishedTieBreaksBySeq(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
+	task.Model = "gpt-5"
+	task.TaskID = corpusTaskID(task)
+	store.tasks[task.TaskID] = task
+
+	tie := time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC)
+	scored := func(composite float64) *submitScorecard {
+		return &submitScorecard{Composite: composite, ScoreVersion: "score/test"}
+	}
+	// Earlier submission: higher (lexically later) ID but lower seq.
+	store.submissions["sub_zzz"] = submissionRecord{
+		SubmissionID: "sub_zzz", TaskID: task.TaskID, Status: submissionStatusPubDone,
+		Scorecard: scored(80), GitHubPath: "tasks/x.json", UpdatedAt: tie, seq: 1,
+	}
+	// Later submission: lower (lexically earlier) ID but higher seq — must win.
+	store.submissions["sub_aaa"] = submissionRecord{
+		SubmissionID: "sub_aaa", TaskID: task.TaskID, Status: submissionStatusPubDone,
+		Scorecard: scored(70), GitHubPath: "tasks/x.json", UpdatedAt: tie, seq: 2,
+	}
+
+	records, err := store.ListPublishedCorpus(t.Context(), publishedCorpusQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("list published: %v", err)
+	}
+	if len(records) != 1 || records[0].Submission.SubmissionID != "sub_aaa" {
+		t.Fatalf("expected latest submission sub_aaa to win tie, got %+v", records)
+	}
+	models, err := store.ListPublishedModelStats(t.Context(), publishedCorpusQuery{})
+	if err != nil {
+		t.Fatalf("list model stats: %v", err)
+	}
+	if len(models) != 1 || models[0].SubmissionCount != 1 || models[0].LatestScore != 70 {
+		t.Fatalf("tie should resolve to latest score 70, got %+v", models)
+	}
+}
+
 func TestSubmissionHandler_LeaderboardEndpoint(t *testing.T) {
 	prevJudge := newServerJudge
 	newServerJudge = func(Config, judgeOptions) (judge.Judge, error) {

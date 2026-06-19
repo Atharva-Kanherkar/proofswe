@@ -71,6 +71,10 @@ type submissionRecord struct {
 	ErrorMessage  string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	// seq is a monotonic creation counter used by the in-memory store to order
+	// submissions deterministically when UpdatedAt timestamps collide (coarse
+	// OS clocks, e.g. Windows). It is unexported and never serialized.
+	seq int64
 }
 
 type judgeJobRecord struct {
@@ -164,6 +168,7 @@ func newSubmissionID() (string, error) {
 type memorySubmissionStore struct {
 	mu          sync.Mutex
 	nextJobID   int64
+	nextSeq     int64
 	tasks       map[string]corpus.Task
 	mappings    map[string]corpusMapping
 	submissions map[string]submissionRecord
@@ -217,6 +222,7 @@ func (s *memorySubmissionStore) CreateSubmission(_ context.Context, req submitRe
 	if _, ok := s.tasks[req.Task.TaskID]; !ok {
 		s.tasks[req.Task.TaskID] = req.Task
 	}
+	s.nextSeq++
 	rec := submissionRecord{
 		SubmissionID:  submissionID,
 		TaskID:        req.Task.TaskID,
@@ -226,6 +232,7 @@ func (s *memorySubmissionStore) CreateSubmission(_ context.Context, req submitRe
 		PayloadSHA256: payloadHash,
 		CreatedAt:     now,
 		UpdatedAt:     now,
+		seq:           s.nextSeq,
 	}
 	s.submissions[submissionID] = rec
 	s.byPayload[payloadHash] = submissionID
@@ -275,7 +282,7 @@ func (s *memorySubmissionStore) ListPublishedCorpus(_ context.Context, q publish
 		if !left.UpdatedAt.Equal(right.UpdatedAt) {
 			return left.UpdatedAt.After(right.UpdatedAt)
 		}
-		return left.SubmissionID > right.SubmissionID
+		return left.seq > right.seq
 	})
 	if q.Limit > 0 && len(out) > q.Limit {
 		out = out[:q.Limit]
@@ -328,7 +335,7 @@ func (s *memorySubmissionStore) latestPublishedSubmissions() map[string]submissi
 			continue
 		}
 		current, ok := latest[rec.TaskID]
-		if !ok || rec.UpdatedAt.After(current.UpdatedAt) || (rec.UpdatedAt.Equal(current.UpdatedAt) && rec.SubmissionID > current.SubmissionID) {
+		if !ok || rec.UpdatedAt.After(current.UpdatedAt) || (rec.UpdatedAt.Equal(current.UpdatedAt) && rec.seq > current.seq) {
 			latest[rec.TaskID] = rec
 		}
 	}
