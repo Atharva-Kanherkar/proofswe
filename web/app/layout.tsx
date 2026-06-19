@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Fraunces, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
-import ThemeToggle from "@/components/theme-toggle";
+import SiteNav from "@/components/site-nav";
 import "./globals.css";
 
 // Runs before paint so the stored/system theme is applied with no flash.
@@ -84,7 +84,7 @@ export default function RootLayout({
     >
       <body className="min-h-full">
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
-        <ThemeToggle />
+        <SiteNav />
         {children}
         <a
           className="creator-credit"
