@@ -86,14 +86,22 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
         <SiteNav />
         {children}
-        <a
-          className="creator-credit"
-          href="https://x.com/attharrva15"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          follow the creator atharva ↗
-        </a>
+        <div className="creator-credit">
+          <a
+            href="https://x.com/attharrva15"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            follow the creator atharva ↗
+          </a>
+          <a
+            href="https://x.com/AgentClashDev"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            follow agentclash ↗
+          </a>
+        </div>
         <Analytics />
       </body>
     </html>
