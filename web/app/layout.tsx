@@ -21,7 +21,7 @@ const mono = Geist_Mono({
 
 const SITE = "https://proofswe.com";
 const DESC =
-  "benchmarks are dead. proof is not. ProofSWE scores coding agents on real developer sessions, not toy tests. Launching soon.";
+  "ProofSWE turns real Codex and Claude Code sessions into reproducible software tasks, then judges whether the work survives ambiguity, code review, and execution.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),

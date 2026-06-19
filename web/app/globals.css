@@ -99,6 +99,13 @@ body {
   font-size: 17px;
   line-height: 1.5;
 }
+.hero-proof {
+  font-family: var(--font-mono-stack);
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
 .hero-link {
   font-family: var(--font-mono-stack);
   font-weight: 400;
@@ -125,6 +132,9 @@ body {
   }
   .hero-sub {
     font-size: 20px;
+  }
+  .hero-proof {
+    font-size: 14px;
   }
 }
 

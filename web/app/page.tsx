@@ -18,10 +18,19 @@ export default function Home() {
       </p>
 
       <p
-        className="rise hero-sub mt-4 max-w-md"
+        className="rise hero-sub mt-4 max-w-2xl"
         style={{ animationDelay: "0.25s" }}
       >
-        free yourself from benchmark pain, launching soon.
+        ProofSWE turns real Codex and Claude Code sessions into reproducible
+        software tasks, then judges whether the work survives ambiguity, code
+        review, and execution.
+      </p>
+
+      <p
+        className="rise hero-proof mt-5 max-w-xl"
+        style={{ animationDelay: "0.32s" }}
+      >
+        no toy prompts. no leaderboard theater. just evidence an agent can ship.
       </p>
 
       <a
@@ -29,7 +38,7 @@ export default function Home() {
         target="_blank"
         rel="noopener noreferrer"
         className="rise hero-link mt-10 inline-flex items-center gap-1.5 transition-colors"
-        style={{ animationDelay: "0.4s" }}
+        style={{ animationDelay: "0.45s" }}
       >
         an agentclash joint
         <span aria-hidden="true">↗</span>
