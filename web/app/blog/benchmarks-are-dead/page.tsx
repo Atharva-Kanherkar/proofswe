@@ -1,53 +1,5 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
-
-const sources = [
-  {
-    label: "SWE-bench paper",
-    href: "https://arxiv.org/abs/2310.06770",
-  },
-  {
-    label: "SWE-bench Verified",
-    href: "https://www.swebench.com/verified.html",
-  },
-  {
-    label: "OpenAI, GPT-4.1",
-    href: "https://openai.com/index/gpt-4-1/",
-  },
-  {
-    label: "Anthropic, Claude 3.7 Sonnet",
-    href: "https://www.anthropic.com/news/claude-3-7-sonnet",
-  },
-  {
-    label: "Anthropic, Claude 4",
-    href: "https://www.anthropic.com/news/claude-4",
-  },
-  {
-    label: "Google, Gemini 2.5 Pro",
-    href: "https://blog.google/innovation-and-ai/models-and-research/google-deepmind/gemini-model-thinking-updates-march-2025/",
-  },
-  {
-    label: "LMArena Text Coding leaderboard",
-    href: "https://lmarena.ai/leaderboard/text/coding",
-  },
-  {
-    label: "LMArena Code Arena leaderboard",
-    href: "https://lmarena.ai/leaderboard/code",
-  },
-  {
-    label: "LMArena leaderboard changelog",
-    href: "https://news.lmarena.ai/leaderboard-changelog/",
-  },
-  {
-    label: "LiveBench paper",
-    href: "https://arxiv.org/abs/2406.19314",
-  },
-  {
-    label: "Stanford AI Index 2025",
-    href: "https://hai.stanford.edu/ai-index/2025-ai-index-report/technical-performance",
-  },
-];
 
 export const metadata: Metadata = {
   title: "Benchmarks Are Dead",
@@ -96,23 +48,6 @@ export default function BenchmarksAreDeadPage() {
           </p>
         </section>
 
-        <figure className="blog-figure rise" style={{ animationDelay: "0.15s" }}>
-          <Image
-            src="/blog/benchmarks-are-dead/benchmark-winners.svg"
-            alt="Four benchmark snapshots showing different leader views across SWE-bench and LMArena."
-            width={1200}
-            height={720}
-          />
-          <figcaption>
-            Public leaderboards are not one scoreboard. They are different
-            instruments with different task surfaces. Sources include the{" "}
-            <a href="https://lmarena.ai/leaderboard/text/coding">LMArena Text Coding</a>
-            {" "}and{" "}
-            <a href="https://lmarena.ai/leaderboard/code">Code Arena</a>
-            {" "}leaderboards, plus SWE-bench and Anthropic reports.
-          </figcaption>
-        </figure>
-
         <section className="blog-section">
           <h2>The benchmark was supposed to be hard. Then everyone trained for it.</h2>
           <p>
@@ -120,8 +55,7 @@ export default function BenchmarksAreDeadPage() {
             completion toward real GitHub issues. The original paper introduced
             2,294 software engineering problems from 12 popular Python
             repositories, and reported that Claude 2 solved only 1.96 percent of
-            issues in the initial evaluation{" "}
-            <a href="https://arxiv.org/abs/2310.06770">[1]</a>.
+            issues in the initial evaluation.
           </p>
           <p>
             That was the right kind of shock. It showed that generating snippets
@@ -135,43 +69,24 @@ export default function BenchmarksAreDeadPage() {
             the headline. OpenAI later introduced SWE-bench Verified as a
             human-validated 500-task subset because annotators needed to check
             whether problem descriptions were clear, test patches were correct,
-            and tasks were solvable from the available information{" "}
-            <a href="https://www.swebench.com/verified.html">[2]</a>. That
+            and tasks were solvable from the available information. That
             improvement was valuable, but it also proved the point: even the
             benchmark had to become a better engineered product.
           </p>
         </section>
 
-        <figure className="blog-figure">
-          <Image
-            src="/blog/benchmarks-are-dead/swebench-rise.svg"
-            alt="Bar chart showing SWE-bench style scores rising quickly from 2023 to 2025."
-            width={1200}
-            height={720}
-          />
-          <figcaption>
-            Reported SWE-bench style scores moved from the low single digits in
-            2023 to more than 70 percent in later model reports. Sources:
-            SWE-bench, OpenAI, Google, Anthropic, and Stanford AI Index.
-          </figcaption>
-        </figure>
-
         <section className="blog-section">
           <h2>The churn is not noise. The churn is the signal.</h2>
           <p>
             In April 2025, OpenAI reported GPT-4.1 at 54.6 percent on SWE-bench
-            Verified, a large jump over GPT-4o and GPT-4.5{" "}
-            <a href="https://openai.com/index/gpt-4-1/">[3]</a>. Earlier that
+            Verified, a large jump over GPT-4o and GPT-4.5. Earlier that
             year, Anthropic reported Claude 3.7 Sonnet at 70.3 percent on 489
             verified tasks with a custom scaffold, while the same model scored
-            63.7 percent without that scaffold{" "}
-            <a href="https://www.anthropic.com/news/claude-3-7-sonnet">[4]</a>.
+            63.7 percent without that scaffold.
             Google reported Gemini 2.5 Pro at 63.8 percent on SWE-bench Verified
-            with a custom agent setup{" "}
-            <a href="https://blog.google/innovation-and-ai/models-and-research/google-deepmind/gemini-model-thinking-updates-march-2025/">[5]</a>.
+            with a custom agent setup.
             Anthropic later reported Claude Opus 4 leading on SWE-bench at 72.5
-            percent{" "}
-            <a href="https://www.anthropic.com/news/claude-4">[6]</a>.
+            percent.
           </p>
           <p>
             Each number may be honest. The problem is that they are not the same
@@ -183,14 +98,11 @@ export default function BenchmarksAreDeadPage() {
           <p>
             LMArena makes the churn visible. Its Text Coding leaderboard listed
             1,366,264 votes across 362 models on June 16, 2026, with
-            claude-fable-5 at the top{" "}
-            <a href="https://lmarena.ai/leaderboard/text/coding">[7]</a>. Its
+            claude-fable-5 at the top. Its
             WebDev leaderboard listed 381,168 votes across 89 models on the same
-            date, again with claude-fable-5 at the top{" "}
-            <a href="https://lmarena.ai/leaderboard/code">[8]</a>. The changelog
+            date, again with claude-fable-5 at the top. The changelog
             shows a steady stream of models being added to text, code, vision,
-            search, document, image, and video leaderboards through early 2026{" "}
-            <a href="https://news.lmarena.ai/leaderboard-changelog/">[9]</a>.
+            search, document, image, and video leaderboards through early 2026.
           </p>
           <p>
             That is the market now: new models, new harnesses, new splits, new
@@ -213,20 +125,16 @@ export default function BenchmarksAreDeadPage() {
             test set contamination can make benchmarks obsolete, while human or
             LLM judging can introduce bias or break down on hard questions. Its
             proposed answer is frequent updates, objective ground truth, and
-            harder tasks over time{" "}
-            <a href="https://arxiv.org/abs/2406.19314">[10]</a>. That is a good
-            direction. It is also a sign that static public benchmarks are
-            fragile by default.
+            harder tasks over time. That is a good direction. It is also a sign
+            that static public benchmarks are fragile by default.
           </p>
           <p>
             The 2025 Stanford AI Index captured the acceleration clearly: on
             SWE-bench, AI systems went from solving 4.4 percent of coding
-            problems in 2023 to 71.7 percent in 2024{" "}
-            <a href="https://hai.stanford.edu/ai-index/2025-ai-index-report/technical-performance">[11]</a>.
-            That is real progress. It is also the kind of progress that should
-            make buyers more careful, not less careful. When a benchmark moves
-            that fast, it stops being a stable proxy for the work you actually
-            need done.
+            problems in 2023 to 71.7 percent in 2024. That is real progress. It
+            is also the kind of progress that should make buyers more careful,
+            not less careful. When a benchmark moves that fast, it stops being a
+            stable proxy for the work you actually need done.
           </p>
         </section>
 
@@ -284,37 +192,6 @@ export default function BenchmarksAreDeadPage() {
           </p>
         </section>
 
-        <section className="blog-section">
-          <h2>FAQ</h2>
-          <h3>Are benchmarks useless for coding agents?</h3>
-          <p>
-            No. Benchmarks are useful filters. They are weak proof. A public
-            benchmark score should start the investigation, not end it.
-          </p>
-          <h3>Why do coding benchmark rankings change so often?</h3>
-          <p>
-            Rankings change because new models ship quickly, scaffolds improve,
-            task splits change, leaderboards add categories, and labs optimize
-            for the most visible tests.
-          </p>
-          <h3>What should replace leaderboard claims?</h3>
-          <p>
-            Reproducible session-based evaluation: real traces, replayable
-            repository states, execution, review, failure analysis, and clear
-            harness documentation.
-          </p>
-        </section>
-
-        <section className="blog-section blog-sources">
-          <h2>Sources</h2>
-          <ol>
-            {sources.map((source) => (
-              <li key={source.href}>
-                <a href={source.href}>{source.label}</a>
-              </li>
-            ))}
-          </ol>
-        </section>
       </article>
     </main>
   );

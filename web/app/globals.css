@@ -279,38 +279,13 @@ body {
 .blog-section li + li {
   margin-top: 8px;
 }
-.blog-section a,
-.blog-figure a,
-.blog-sources a {
+.blog-section a {
   color: var(--accent);
   text-decoration: none;
 }
 .blog-section a:hover,
-.blog-figure a:hover,
-.blog-sources a:hover,
 .blog-kicker:hover {
   color: var(--blue-800);
-}
-.blog-figure {
-  margin: 48px 0;
-}
-.blog-figure img {
-  display: block;
-  width: 100%;
-  height: auto;
-  border-radius: 8px;
-  border: 1px solid var(--gray-alpha-400);
-}
-.blog-figure figcaption {
-  margin-top: 12px;
-  color: var(--muted);
-  font-family: var(--font-mono-stack);
-  font-size: 12px;
-  line-height: 1.55;
-}
-.blog-sources ol {
-  margin: 0;
-  padding-left: 22px;
 }
 
 @media (min-width: 601px) {
