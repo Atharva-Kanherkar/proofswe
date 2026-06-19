@@ -26,20 +26,12 @@ export default function Home() {
         work survives ambiguity, review, and execution.
       </p>
 
-      <p
-        className="rise hero-proof mt-5 max-w-xl"
-        style={{ animationDelay: "0.32s" }}
-      >
-        not toy prompts. not leaderboard theater. proof that an agent can handle
-        the messy middle of shipping software.
-      </p>
-
       <a
         href={AGENTCLASH_URL}
         target="_blank"
         rel="noopener noreferrer"
         className="rise hero-link mt-10 inline-flex items-center gap-1.5 transition-colors"
-        style={{ animationDelay: "0.45s" }}
+        style={{ animationDelay: "0.35s" }}
       >
         an agentclash joint
         <span aria-hidden="true">↗</span>
