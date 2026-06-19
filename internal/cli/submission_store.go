@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -38,6 +39,8 @@ const (
 type submissionStore interface {
 	CreateSubmission(context.Context, submitRequest) (submissionRecord, error)
 	GetSubmission(context.Context, string) (submissionRecord, bool, error)
+	ListPublishedCorpus(context.Context, publishedCorpusQuery) ([]publishedCorpusRecord, error)
+	ListPublishedModelStats(context.Context, publishedCorpusQuery) ([]publishedModelRecord, error)
 	ClaimJudgeJob(context.Context, string, time.Time) (judgeJobRecord, bool, error)
 	ClaimPublishJob(context.Context, string, time.Time) (judgeJobRecord, bool, error)
 	CompleteJudgeJob(context.Context, judgeJobRecord, judgeRunRecord) error
@@ -88,6 +91,29 @@ type judgeRunRecord struct {
 	Status        string
 	StartedAt     time.Time
 	CompletedAt   time.Time
+}
+
+type publishedCorpusQuery struct {
+	Limit   int
+	Harness string
+	Model   string
+}
+
+type publishedCorpusRecord struct {
+	Submission submissionRecord
+	Harness    string
+	Model      string
+	RepoURL    string
+}
+
+type publishedModelRecord struct {
+	Harness           string
+	Model             string
+	SubmissionCount   int
+	AverageScore      float64
+	BestScore         float64
+	LatestScore       float64
+	LatestPublishedAt time.Time
 }
 
 func validateSubmittedTask(task corpus.Task) error {
@@ -219,6 +245,94 @@ func (s *memorySubmissionStore) GetSubmission(_ context.Context, submissionID st
 	defer s.mu.Unlock()
 	rec, ok := s.submissions[submissionID]
 	return rec, ok, nil
+}
+
+func (s *memorySubmissionStore) ListPublishedCorpus(_ context.Context, q publishedCorpusQuery) ([]publishedCorpusRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	latest := s.latestPublishedSubmissions()
+	var out []publishedCorpusRecord
+	for _, rec := range latest {
+		task, ok := s.tasks[rec.TaskID]
+		if !ok {
+			continue
+		}
+		if q.Harness != "" && task.Harness != q.Harness {
+			continue
+		}
+		if q.Model != "" && task.Model != q.Model {
+			continue
+		}
+		out = append(out, publishedCorpusRecord{
+			Submission: rec,
+			Harness:    task.Harness,
+			Model:      task.Model,
+			RepoURL:    task.Repo.RemoteURL,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		left, right := out[i].Submission, out[j].Submission
+		if !left.UpdatedAt.Equal(right.UpdatedAt) {
+			return left.UpdatedAt.After(right.UpdatedAt)
+		}
+		return left.SubmissionID > right.SubmissionID
+	})
+	if q.Limit > 0 && len(out) > q.Limit {
+		out = out[:q.Limit]
+	}
+	return out, nil
+}
+
+func (s *memorySubmissionStore) ListPublishedModelStats(_ context.Context, q publishedCorpusQuery) ([]publishedModelRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	latest := s.latestPublishedSubmissions()
+	type aggregate struct {
+		row publishedModelRecord
+		sum float64
+	}
+	byModel := map[string]*aggregate{}
+	for _, rec := range latest {
+		task, ok := s.tasks[rec.TaskID]
+		if !ok || (q.Harness != "" && task.Harness != q.Harness) || (q.Model != "" && task.Model != q.Model) {
+			continue
+		}
+		key := task.Harness + "\x00" + task.Model
+		item := byModel[key]
+		if item == nil {
+			item = &aggregate{row: publishedModelRecord{Harness: task.Harness, Model: task.Model}}
+			byModel[key] = item
+		}
+		item.row.SubmissionCount++
+		item.sum += rec.Scorecard.Composite
+		if rec.Scorecard.Composite > item.row.BestScore {
+			item.row.BestScore = rec.Scorecard.Composite
+		}
+		if rec.UpdatedAt.After(item.row.LatestPublishedAt) {
+			item.row.LatestScore = rec.Scorecard.Composite
+			item.row.LatestPublishedAt = rec.UpdatedAt
+		}
+	}
+	out := make([]publishedModelRecord, 0, len(byModel))
+	for _, item := range byModel {
+		item.row.AverageScore = item.sum / float64(item.row.SubmissionCount)
+		out = append(out, item.row)
+	}
+	return out, nil
+}
+
+func (s *memorySubmissionStore) latestPublishedSubmissions() map[string]submissionRecord {
+	latest := make(map[string]submissionRecord)
+	for _, rec := range s.submissions {
+		if rec.Status != submissionStatusPubDone || rec.Scorecard == nil || rec.GitHubPath == "" {
+			continue
+		}
+		current, ok := latest[rec.TaskID]
+		if !ok || rec.UpdatedAt.After(current.UpdatedAt) || (rec.UpdatedAt.Equal(current.UpdatedAt) && rec.SubmissionID > current.SubmissionID) {
+			latest[rec.TaskID] = rec
+		}
+	}
+	return latest
 }
 
 func (s *memorySubmissionStore) GetTaskMapping(_ context.Context, task corpus.Task) (corpusMapping, bool, error) {

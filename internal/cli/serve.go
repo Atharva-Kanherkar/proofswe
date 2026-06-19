@@ -24,6 +24,10 @@ var newServerJudge = func(cfg Config, opts judgeOptions) (judge.Judge, error) {
 	return newScoreJudge(cfg, opts)
 }
 
+var newServerCorpusPublisher = func(cfg Config) corpusPublisher {
+	return newConfiguredCorpusPublisher(cfg)
+}
+
 func runServeCommand(ctx context.Context, cfg Config, args []string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -80,7 +84,7 @@ func newSubmissionHandlerWithContext(ctx context.Context, cfg Config, opts judge
 	workerWG.Add(1)
 	go func() {
 		defer workerWG.Done()
-		submissionWorker{store: store, judge: j, publisher: newConfiguredCorpusPublisher(cfg), workerID: "proofswe-api", logger: slog.Default()}.Run(workerCtx)
+		submissionWorker{store: store, judge: j, publisher: newServerCorpusPublisher(cfg), workerID: "proofswe-api", logger: slog.Default()}.Run(workerCtx)
 	}()
 	cleanup := func() {
 		cancelWorker()
@@ -100,6 +104,42 @@ func newSubmissionHandlerWithContext(ctx context.Context, cfg Config, opts judge
 		}
 		w.Header().Set("content-type", "application/json")
 		_, _ = io.WriteString(w, `{"ok":true}`+"\n")
+	})
+	mux.HandleFunc("/v1/leaderboard", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("allow", http.MethodGet+", "+http.MethodHead)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		limit, err := parseLeaderboardLimit(r.URL.Query().Get("limit"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		query := publishedCorpusQuery{
+			Limit:   limit,
+			Harness: strings.TrimSpace(r.URL.Query().Get("harness")),
+			Model:   strings.TrimSpace(r.URL.Query().Get("model")),
+		}
+		records, err := store.ListPublishedCorpus(r.Context(), query)
+		if err != nil {
+			http.Error(w, "list leaderboard: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		models, err := store.ListPublishedModelStats(r.Context(), query)
+		if err != nil {
+			http.Error(w, "list model leaderboard: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("access-control-allow-origin", "*")
+		w.Header().Set("cache-control", "public, max-age=60, stale-while-revalidate=300")
+		w.Header().Set("content-type", "application/json")
+		if r.Method == http.MethodHead {
+			return
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(buildLeaderboardResponse(records, models, time.Now()))
 	})
 	mux.HandleFunc("/v1/submissions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
