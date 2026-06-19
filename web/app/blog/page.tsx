@@ -19,8 +19,19 @@ export default function BlogPage() {
 
         <p className="hero-sub mt-4">
           Notes on coding agents, software engineering evaluation, and proof.
-          Content coming soon.
         </p>
+
+        <Link
+          href="/blog/benchmarks-are-dead"
+          className="blog-card mt-10 text-left"
+        >
+          <span className="blog-card-kicker">Essay</span>
+          <span className="blog-card-title">Benchmarks Are Dead</span>
+          <span className="blog-card-desc">
+            Why coding benchmark leaderboards are useful signals, but weak proof
+            that software engineering is solved.
+          </span>
+        </Link>
       </div>
     </main>
   );

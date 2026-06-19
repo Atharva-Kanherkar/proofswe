@@ -1,0 +1,32 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Different benchmark views produce different winners</title>
+  <desc id="desc">Four benchmark snapshots showing that the leading model depends on the benchmark, harness, and date.</desc>
+  <rect width="1200" height="720" fill="#15120c"/>
+  <text x="72" y="88" fill="#ece6d8" font-family="ui-serif, Georgia, serif" font-size="54" font-weight="600">The scoreboard changes when the lens changes</text>
+  <text x="72" y="132" fill="#a39a87" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20">Benchmark winner, reported snapshot, and what the number really measures</text>
+  <g transform="translate(72 190)">
+    <rect width="500" height="160" rx="10" fill="#211d15" stroke="#ffffff24"/>
+    <text x="28" y="42" fill="#8a8073" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">LMArena Text Coding</text>
+    <text x="28" y="88" fill="#ece6d8" font-family="ui-serif, Georgia, serif" font-size="34" font-weight="600">claude-fable-5</text>
+    <text x="28" y="124" fill="#a39a87" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">1563 +/- 18, Jun 16 2026</text>
+  </g>
+  <g transform="translate(628 190)">
+    <rect width="500" height="160" rx="10" fill="#211d15" stroke="#ffffff24"/>
+    <text x="28" y="42" fill="#8a8073" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">LMArena WebDev</text>
+    <text x="28" y="88" fill="#ece6d8" font-family="ui-serif, Georgia, serif" font-size="34" font-weight="600">claude-fable-5</text>
+    <text x="28" y="124" fill="#a39a87" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">1654 +/- 16, Jun 16 2026</text>
+  </g>
+  <g transform="translate(72 390)">
+    <rect width="500" height="160" rx="10" fill="#211d15" stroke="#ffffff24"/>
+    <text x="28" y="42" fill="#8a8073" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">SWE-bench, original paper</text>
+    <text x="28" y="88" fill="#ece6d8" font-family="ui-serif, Georgia, serif" font-size="34" font-weight="600">Claude 2</text>
+    <text x="28" y="124" fill="#a39a87" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">1.96% resolved, Oct 2023</text>
+  </g>
+  <g transform="translate(628 390)">
+    <rect width="500" height="160" rx="10" fill="#211d15" stroke="#ffffff24"/>
+    <text x="28" y="42" fill="#8a8073" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">Claude 4 launch report</text>
+    <text x="28" y="88" fill="#ece6d8" font-family="ui-serif, Georgia, serif" font-size="34" font-weight="600">Claude Opus 4</text>
+    <text x="28" y="124" fill="#a39a87" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">72.5% on SWE-bench, May 2025</text>
+  </g>
+  <text x="72" y="634" fill="#8a8073" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">Same market. Different task surfaces. Different scaffolds. Different dates.</text>
+</svg>
