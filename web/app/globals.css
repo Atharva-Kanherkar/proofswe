@@ -86,7 +86,6 @@ body {
 .site-brand {
   display: inline-flex;
   align-items: center;
-  gap: 14px;
   min-width: 0;
   color: var(--fg);
   font-family: var(--font-serif-stack);
@@ -94,21 +93,6 @@ body {
   font-weight: 600;
   line-height: 1;
   text-decoration: none;
-}
-.site-brand-mark {
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-  border-radius: 6px 2px 6px 2px;
-  background:
-    linear-gradient(135deg, transparent 0 42%, var(--bg) 42% 55%, transparent 55%),
-    var(--fg);
-}
-.site-brand-divider {
-  width: 1px;
-  height: 24px;
-  flex: 0 0 auto;
-  background: var(--line);
 }
 .site-nav-links {
   display: inline-flex;
@@ -237,11 +221,7 @@ body {
     gap: 16px;
   }
   .site-brand {
-    gap: 10px;
     font-size: 18px;
-  }
-  .site-brand-divider {
-    display: none;
   }
   .site-nav-links {
     gap: 14px;

@@ -8,8 +8,6 @@ export default function SiteNav() {
     <header className="site-nav">
       <nav className="site-nav-inner" aria-label="Primary navigation">
         <Link href="/" className="site-brand" aria-label="ProofSWE home">
-          <span className="site-brand-mark" aria-hidden="true" />
-          <span className="site-brand-divider" aria-hidden="true" />
           <span>ProofSWE</span>
         </Link>
 
