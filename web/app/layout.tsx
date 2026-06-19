@@ -88,18 +88,18 @@ export default function RootLayout({
         {children}
         <div className="creator-credit">
           <a
-            href="https://x.com/attharrva15"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            follow the creator atharva ↗
-          </a>
-          <a
             href="https://x.com/AgentClashDev"
             target="_blank"
             rel="noopener noreferrer"
           >
             follow agentclash ↗
+          </a>
+          <a
+            href="https://x.com/attharrva15"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            follow the creator atharva ↗
           </a>
         </div>
         <Analytics />
