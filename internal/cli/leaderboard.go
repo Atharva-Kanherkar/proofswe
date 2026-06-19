@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Atharva-Kanherkar/proofswe/internal/corpus"
 )
 
 const (
@@ -37,7 +39,41 @@ type leaderboardSubmission struct {
 	GitHubCommitSHA string    `json:"github_commit_sha,omitempty"`
 	SubmittedAt     time.Time `json:"submitted_at"`
 	PublishedAt     time.Time `json:"published_at"`
+
+	// Detail powers the expandable per-task view: what the session was asked to
+	// do, how it deterministically resolved, and the full scored breakdown with
+	// the logit evidence behind the headline number.
+	TaskStatement string              `json:"task_statement,omitempty"`
+	FollowUps     int                 `json:"follow_ups,omitempty"`
+	Outcome       *leaderboardOutcome `json:"outcome,omitempty"`
+	Axes          []leaderboardAxis   `json:"axes,omitempty"`
+	Utility       any                 `json:"utility,omitempty"`
+	Note          string              `json:"note,omitempty"`
 }
+
+// leaderboardOutcome is the deterministic, transcript-derived result surfaced in
+// the detail view — the "what happened / what failed" half of the story.
+type leaderboardOutcome struct {
+	Verification     string   `json:"verification,omitempty"` // passed | failed | "" (none run)
+	Landed           bool     `json:"landed"`
+	Termination      string   `json:"termination,omitempty"` // clean | abandoned | ""
+	HumanCorrections int      `json:"human_corrections,omitempty"`
+	HumanAcceptances int      `json:"human_acceptances,omitempty"`
+	ReworkCount      int      `json:"rework_count,omitempty"`
+	Interruptions    int      `json:"interruptions,omitempty"`
+	FilesTouched     int      `json:"files_touched,omitempty"`
+	TestFilesTouched int      `json:"test_files_touched,omitempty"`
+	SkillsUsed       []string `json:"skills_used,omitempty"`
+}
+
+// leaderboardAxis is one scored dimension with its human-readable detail.
+type leaderboardAxis struct {
+	Name   string  `json:"name"`
+	Score  float64 `json:"score"`
+	Detail string  `json:"detail,omitempty"`
+}
+
+const maxTaskStatementChars = 1600
 
 type leaderboardModel struct {
 	Harness           string    `json:"harness"`
@@ -73,6 +109,12 @@ func buildLeaderboardResponse(records []publishedCorpusRecord, modelRecords []pu
 			GitHubCommitSHA: rec.GitHubCommit,
 			SubmittedAt:     rec.CreatedAt.UTC(),
 			PublishedAt:     rec.UpdatedAt.UTC(),
+			TaskStatement:   taskStatement(record.Task),
+			FollowUps:       followUpCount(record.Task),
+			Outcome:         leaderboardOutcomeFrom(record.Task),
+			Axes:            leaderboardAxesFrom(rec.Scorecard),
+			Utility:         rec.Scorecard.Utility,
+			Note:            rec.Scorecard.Note,
 		}
 		resp.Recent = append(resp.Recent, item)
 	}
@@ -165,6 +207,59 @@ func publicScorecardSummary(card *submitScorecard) string {
 		return strings.Join(parts, "; ")
 	}
 	return strings.TrimSpace(card.Note)
+}
+
+// taskStatement returns the developer's opening ask — what the session set out
+// to do — truncated so the leaderboard payload stays lean.
+func taskStatement(task corpus.Task) string {
+	if len(task.Prompts) == 0 {
+		return ""
+	}
+	text := strings.TrimSpace(task.Prompts[0].Text)
+	if len(text) <= maxTaskStatementChars {
+		return text
+	}
+	return strings.TrimSpace(text[:maxTaskStatementChars]) + "…"
+}
+
+// followUpCount is how many developer turns followed the opening ask — a quick
+// read on how much steering the session needed.
+func followUpCount(task corpus.Task) int {
+	if len(task.Prompts) <= 1 {
+		return 0
+	}
+	return len(task.Prompts) - 1
+}
+
+func leaderboardOutcomeFrom(task corpus.Task) *leaderboardOutcome {
+	o := task.Outcome
+	out := &leaderboardOutcome{
+		Verification:     o.Verification,
+		Landed:           o.Landed,
+		Termination:      o.Termination,
+		HumanCorrections: o.HumanCorrections,
+		HumanAcceptances: o.HumanAcceptances,
+		ReworkCount:      o.ReworkCount,
+		Interruptions:    o.Interruptions,
+		FilesTouched:     o.FilesTouched,
+		TestFilesTouched: o.TestFilesTouched,
+		SkillsUsed:       o.SkillsUsed,
+	}
+	return out
+}
+
+func leaderboardAxesFrom(card *submitScorecard) []leaderboardAxis {
+	if card == nil {
+		return nil
+	}
+	out := make([]leaderboardAxis, 0, len(card.Axes))
+	for _, axis := range card.Axes {
+		if !axis.Present {
+			continue
+		}
+		out = append(out, leaderboardAxis{Name: axis.Name, Score: roundScore(axis.Score), Detail: axis.Detail})
+	}
+	return out
 }
 
 func roundScore(v float64) float64 {

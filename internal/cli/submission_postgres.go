@@ -220,7 +220,7 @@ WITH published AS (
 	SELECT DISTINCT ON (s.task_id)
 	       s.submission_id, s.task_id, s.status, s.client_version, s.contributor, s.payload_sha256,
 	       s.scorecard_json, s.created_at, s.updated_at, t.github_path, t.github_pr_url,
-	       t.github_commit_sha, t.harness, t.model, t.repo_url
+	       t.github_commit_sha, t.harness, t.model, t.repo_url, t.task_json
 	FROM submissions s
 	JOIN tasks t ON t.task_id = s.task_id
 `+where+`
@@ -229,7 +229,7 @@ WITH published AS (
 SELECT p.submission_id, p.task_id, p.status, COALESCE(p.client_version, ''), COALESCE(p.contributor, ''),
        p.payload_sha256, p.scorecard_json::text, COALESCE(p.github_path, ''), COALESCE(p.github_pr_url, ''),
        COALESCE(p.github_commit_sha, ''), p.created_at, p.updated_at, COALESCE(p.harness, ''),
-       COALESCE(p.model, ''), COALESCE(p.repo_url, '')
+       COALESCE(p.model, ''), COALESCE(p.repo_url, ''), p.task_json::text
 FROM published p
 ORDER BY p.updated_at DESC
 LIMIT $`+fmt.Sprint(len(args)), args...)
@@ -241,9 +241,9 @@ LIMIT $`+fmt.Sprint(len(args)), args...)
 	var out []publishedCorpusRecord
 	for rows.Next() {
 		var rec submissionRecord
-		var scorecardJSON string
+		var scorecardJSON, taskJSON string
 		var item publishedCorpusRecord
-		if err := rows.Scan(&rec.SubmissionID, &rec.TaskID, &rec.Status, &rec.ClientVersion, &rec.Contributor, &rec.PayloadSHA256, &scorecardJSON, &rec.GitHubPath, &rec.GitHubPRURL, &rec.GitHubCommit, &rec.CreatedAt, &rec.UpdatedAt, &item.Harness, &item.Model, &item.RepoURL); err != nil {
+		if err := rows.Scan(&rec.SubmissionID, &rec.TaskID, &rec.Status, &rec.ClientVersion, &rec.Contributor, &rec.PayloadSHA256, &scorecardJSON, &rec.GitHubPath, &rec.GitHubPRURL, &rec.GitHubCommit, &rec.CreatedAt, &rec.UpdatedAt, &item.Harness, &item.Model, &item.RepoURL, &taskJSON); err != nil {
 			return nil, err
 		}
 		var card submitScorecard
@@ -251,6 +251,10 @@ LIMIT $`+fmt.Sprint(len(args)), args...)
 			return nil, fmt.Errorf("decode leaderboard scorecard: %w", err)
 		}
 		rec.Scorecard = &card
+		// task_json carries the prompts + deterministic outcome the detail view
+		// expands; a malformed row should not sink the whole feed, so decode
+		// best-effort and fall through with whatever scalar columns we have.
+		_ = json.Unmarshal([]byte(taskJSON), &item.Task)
 		item.Submission = rec
 		out = append(out, item)
 	}

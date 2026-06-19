@@ -108,6 +108,7 @@ type publishedCorpusRecord struct {
 	Harness    string
 	Model      string
 	RepoURL    string
+	Task       corpus.Task
 }
 
 type publishedModelRecord struct {
@@ -275,6 +276,7 @@ func (s *memorySubmissionStore) ListPublishedCorpus(_ context.Context, q publish
 			Harness:    task.Harness,
 			Model:      task.Model,
 			RepoURL:    task.Repo.RemoteURL,
+			Task:       task,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
