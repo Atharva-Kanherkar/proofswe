@@ -494,6 +494,167 @@ func TestMemorySubmissionStore_PermanentJudgeFailureDoesNotRetry(t *testing.T) {
 	}
 }
 
+func TestMemorySubmissionStore_ListsPublishedCorpusFeedAndLeaderboard(t *testing.T) {
+	store := newMemorySubmissionStore()
+	firstTask := corpusTaskForServe(score.ExtractedSignals{}, true)
+	firstTask.Model = "gpt-5"
+	firstTask.Prompts[0].Text = "fix codex bug"
+	firstTask.TaskID = corpusTaskID(firstTask)
+	secondTask := corpusTaskForServe(score.ExtractedSignals{}, true)
+	secondTask.Harness = "claudecode"
+	secondTask.Model = "claude-opus"
+	secondTask.Prompts[0].Text = "fix claude bug"
+	secondTask.TaskID = corpusTaskID(secondTask)
+
+	publishForLeaderboard(t, store, firstTask, "", 80, "solid fix", corpusMapping{
+		Path:      mustCorpusTaskPath(t, firstTask.TaskID),
+		PRURL:     "https://github.com/Atharva-Kanherkar/proofswe-corpus/pull/10",
+		CommitSHA: "abc",
+	})
+	publishForLeaderboard(t, store, firstTask, "duplicate-upload", 70, "later duplicate", corpusMapping{
+		Path:      mustCorpusTaskPath(t, firstTask.TaskID),
+		PRURL:     "https://github.com/Atharva-Kanherkar/proofswe-corpus/pull/10",
+		CommitSHA: "abc",
+	})
+	publishForLeaderboard(t, store, secondTask, "", 90, "excellent fix", corpusMapping{
+		Path:      mustCorpusTaskPath(t, secondTask.TaskID),
+		PRURL:     "https://github.com/Atharva-Kanherkar/proofswe-corpus/pull/11",
+		CommitSHA: "def",
+	})
+
+	records, err := store.ListPublishedCorpus(t.Context(), publishedCorpusQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("list published: %v", err)
+	}
+	models, err := store.ListPublishedModelStats(t.Context(), publishedCorpusQuery{})
+	if err != nil {
+		t.Fatalf("list model stats: %v", err)
+	}
+	resp := buildLeaderboardResponse(records, models, time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC))
+	if len(resp.Recent) != 2 || len(resp.Models) != 2 {
+		t.Fatalf("leaderboard response = %+v", resp)
+	}
+	if resp.Recent[0].GitHubPRURL == "" || resp.Recent[0].GitHubURL == "" || resp.Recent[0].Summary == "" {
+		t.Fatalf("recent item missing public display fields: %+v", resp.Recent[0])
+	}
+	if resp.Models[0].Model != "claude-opus" || resp.Models[0].AverageScore != 90 {
+		t.Fatalf("model rows = %+v", resp.Models)
+	}
+	for _, model := range resp.Models {
+		if model.Model == "gpt-5" && (model.SubmissionCount != 1 || model.AverageScore != 70) {
+			t.Fatalf("duplicate task inflated model stats: %+v", model)
+		}
+	}
+	limited, err := store.ListPublishedCorpus(t.Context(), publishedCorpusQuery{Limit: 1})
+	if err != nil {
+		t.Fatalf("limited list: %v", err)
+	}
+	limitedResp := buildLeaderboardResponse(limited, models, time.Now())
+	if len(limitedResp.Recent) != 1 || len(limitedResp.Models) != 2 {
+		t.Fatalf("limit should affect recent feed only: %+v", limitedResp)
+	}
+
+	filtered, err := store.ListPublishedCorpus(t.Context(), publishedCorpusQuery{Harness: "codex", Limit: 10})
+	if err != nil {
+		t.Fatalf("filtered list: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].Harness != "codex" {
+		t.Fatalf("filtered records = %+v", filtered)
+	}
+}
+
+func TestSubmissionHandler_LeaderboardEndpoint(t *testing.T) {
+	prevJudge := newServerJudge
+	newServerJudge = func(Config, judgeOptions) (judge.Judge, error) {
+		return judge.FakeJudge{V: judge.Verdict{Outcome: judge.OutcomeAccepted, Sentiment: 0.8}}, nil
+	}
+	prevPublisher := newServerCorpusPublisher
+	publisher := &fakeCorpusPublisher{}
+	newServerCorpusPublisher = func(Config) corpusPublisher { return publisher }
+	t.Cleanup(func() {
+		newServerJudge = prevJudge
+		newServerCorpusPublisher = prevPublisher
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	handler, cleanup, err := newSubmissionHandlerWithContext(ctx, serveTestConfig(), judgeOptions{})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	defer cleanup()
+
+	task := corpusTaskForServe(score.ExtractedSignals{Verification: "passed"}, true)
+	task.Model = "gpt-5"
+	task.Prompts[0].Text = "publish a displayable task"
+	task.TaskID = corpusTaskID(task)
+	publisher.mapping = corpusMapping{
+		Path:      mustCorpusTaskPath(t, task.TaskID),
+		PRURL:     "https://github.com/Atharva-Kanherkar/proofswe-corpus/pull/42",
+		CommitSHA: "commit42",
+	}
+	body, _ := json.Marshal(submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	req := httptest.NewRequest(http.MethodPost, "/v1/submissions", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("submit status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var got leaderboardResponse
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		req = httptest.NewRequest(http.MethodGet, "/v1/leaderboard?harness=codex&limit=5", nil)
+		rr = httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("leaderboard status = %d body=%s", rr.Code, rr.Body.String())
+		}
+		if rr.Header().Get("access-control-allow-origin") != "*" {
+			t.Fatalf("missing public CORS header: %v", rr.Header())
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode leaderboard: %v\n%s", err, rr.Body.String())
+		}
+		if len(got.Recent) == 1 && len(got.Models) == 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(got.Recent) != 1 || got.Recent[0].GitHubPRURL == "" || got.Recent[0].GitHubURL == "" || got.Recent[0].Summary == "" {
+		t.Fatalf("leaderboard response = %+v", got)
+	}
+	if got.Recent[0].TaskID != task.TaskID || got.Models[0].Model != "gpt-5" {
+		t.Fatalf("wrong leaderboard item = %+v", got)
+	}
+	encoded := rr.Body.String()
+	for _, forbidden := range []string{"publish a displayable task", "fixed", "+++ b/main.go"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("leaderboard leaked raw corpus content %q in %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestSubmissionHandler_LeaderboardRejectsInvalidLimit(t *testing.T) {
+	prev := newServerJudge
+	newServerJudge = func(Config, judgeOptions) (judge.Judge, error) {
+		return judge.FakeJudge{V: judge.Verdict{Outcome: judge.OutcomeAccepted}}, nil
+	}
+	t.Cleanup(func() { newServerJudge = prev })
+
+	handler, cleanup, err := newSubmissionHandlerWithContext(t.Context(), serveTestConfig(), judgeOptions{})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	defer cleanup()
+	req := httptest.NewRequest(http.MethodGet, "/v1/leaderboard?limit=999999", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestMemorySubmissionStore_RejectsTaskIDProvenanceConflict(t *testing.T) {
 	store := newMemorySubmissionStore()
 	task := corpusTaskForServe(score.ExtractedSignals{}, true)
@@ -852,6 +1013,37 @@ func (j blockingJudge) Assess(ctx context.Context, _ []judge.Turn, _ []string) (
 		return judge.Verdict{}, j.err
 	}
 	return j.verdict, nil
+}
+
+func publishForLeaderboard(t *testing.T, store *memorySubmissionStore, task corpus.Task, clientVersion string, score float64, note string, mapping corpusMapping) {
+	t.Helper()
+	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, ClientVersion: clientVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create submission: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "judge-worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim judge ok=%v err=%v", ok, err)
+	}
+	if job.SubmissionID != rec.SubmissionID {
+		t.Fatalf("claimed submission %q, want %q", job.SubmissionID, rec.SubmissionID)
+	}
+	if err := store.CompleteJudgeJob(t.Context(), job, judgeRunRecord{
+		SubmissionID: rec.SubmissionID,
+		Scorecard:    &submitScorecard{Composite: score, ScoreVersion: "score/test", Note: note, Axes: []submitAxis{{Name: "success", Score: score, Detail: note}}},
+		Status:       submissionStatusJudged,
+		StartedAt:    time.Now(),
+		CompletedAt:  time.Now(),
+	}); err != nil {
+		t.Fatalf("complete judge: %v", err)
+	}
+	publishJob, ok, err := store.ClaimPublishJob(t.Context(), "publish-worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim publish ok=%v err=%v", ok, err)
+	}
+	if err := store.CompletePublishJob(t.Context(), publishJob, mapping); err != nil {
+		t.Fatalf("complete publish: %v", err)
+	}
 }
 
 func reproducibleCaptureForServe() core.Task {

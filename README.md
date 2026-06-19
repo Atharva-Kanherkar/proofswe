@@ -90,6 +90,21 @@ If `DATABASE_URL` is unset, the server uses an in-memory queue. If
 `PROOFSWE_GITHUB_TOKEN` is unset, judged submissions are not published to a
 corpus repository.
 
+### Public Corpus Feed
+
+The API exposes published corpus metadata for static websites:
+
+```sh
+curl 'https://api.proofswe.com/v1/leaderboard?limit=50'
+curl 'https://api.proofswe.com/v1/leaderboard?harness=codex&model=gpt-5'
+```
+
+The response contains a recent published-task feed with scorecard summaries and
+GitHub corpus PR/path links, plus model rankings grouped by harness and model.
+It intentionally excludes raw prompts, transcript messages, tool outputs, code
+patches, and task JSON; those remain in the corpus repository and backend
+storage.
+
 ## Development
 
 ```sh
