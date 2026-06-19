@@ -18,12 +18,10 @@ export default function Home() {
       </p>
 
       <p
-        className="rise hero-sub mt-4 max-w-2xl"
+        className="rise hero-sub mt-4 max-w-md"
         style={{ animationDelay: "0.25s" }}
       >
-        SWE is not solved by passing tidy benchmarks. ProofSWE turns real coding
-        agent sessions into reproducible software tasks, then tests whether the
-        work survives ambiguity, review, and execution.
+        free yourself from benchmark pain, launching soon.
       </p>
 
       <a
@@ -31,7 +29,7 @@ export default function Home() {
         target="_blank"
         rel="noopener noreferrer"
         className="rise hero-link mt-10 inline-flex items-center gap-1.5 transition-colors"
-        style={{ animationDelay: "0.35s" }}
+        style={{ animationDelay: "0.4s" }}
       >
         an agentclash joint
         <span aria-hidden="true">↗</span>
