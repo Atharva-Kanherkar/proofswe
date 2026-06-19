@@ -21,7 +21,7 @@ const mono = Geist_Mono({
 
 const SITE = "https://proofswe.com";
 const DESC =
-  "ProofSWE turns real Codex and Claude Code sessions into reproducible software tasks, then judges whether the work survives ambiguity, code review, and execution.";
+  "SWE is not solved by tidy benchmarks. ProofSWE turns real coding agent sessions into reproducible software tasks and tests whether the work survives ambiguity, review, and execution.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),

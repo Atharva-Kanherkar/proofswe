@@ -2,7 +2,7 @@ import { ImageResponse } from "next/og";
 import { loadFraunces } from "@/lib/og-font";
 
 export const alt =
-  "ProofSWE. Real coding-agent sessions turned into reproducible proof.";
+  "ProofSWE. SWE is not solved by tidy benchmarks.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -69,7 +69,7 @@ export default async function Image() {
         </div>
 
         <div style={{ display: "flex", fontSize: 26, color: "#6a6253" }}>
-          real coding-agent sessions · reproducible proof · agentclash.dev
+          real coding agent sessions · reproducible proof · agentclash.dev
         </div>
       </div>
     ),

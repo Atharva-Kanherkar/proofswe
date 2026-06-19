@@ -21,16 +21,17 @@ export default function Home() {
         className="rise hero-sub mt-4 max-w-2xl"
         style={{ animationDelay: "0.25s" }}
       >
-        ProofSWE turns real Codex and Claude Code sessions into reproducible
-        software tasks, then judges whether the work survives ambiguity, code
-        review, and execution.
+        SWE is not solved by passing tidy benchmarks. ProofSWE turns real coding
+        agent sessions into reproducible software tasks, then tests whether the
+        work survives ambiguity, review, and execution.
       </p>
 
       <p
         className="rise hero-proof mt-5 max-w-xl"
         style={{ animationDelay: "0.32s" }}
       >
-        no toy prompts. no leaderboard theater. just evidence an agent can ship.
+        not toy prompts. not leaderboard theater. proof that an agent can handle
+        the messy middle of shipping software.
       </p>
 
       <a
