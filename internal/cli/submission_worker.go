@@ -85,6 +85,8 @@ func (w submissionWorker) process(ctx context.Context, job judgeJobRecord) {
 		signals := signalsFromSubmittedTask(job.Task, success, judge.Label(verdict))
 		result := score.Score(signals)
 		card = scorecardForSubmit(result)
+		card.Title = verdict.Title
+		card.TaskSummary = verdict.Summary
 		completed := time.Now().UTC()
 		run := judgeRunRecord{
 			SubmissionID:  job.SubmissionID,

@@ -60,6 +60,10 @@ type submitScorecard struct {
 	Utility      any          `json:"utility,omitempty"`
 	Axes         []submitAxis `json:"axes,omitempty"`
 	Note         string       `json:"note,omitempty"`
+	// Title/TaskSummary are the blinded judge's one-line read of the task's main
+	// goal (issue: judge-authored titles). Empty for sessions judged before this.
+	Title       string `json:"title,omitempty"`
+	TaskSummary string `json:"task_summary,omitempty"`
 }
 
 type submitAxis struct {

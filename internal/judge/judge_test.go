@@ -152,10 +152,10 @@ func TestScoreSuccess(t *testing.T) {
 		v    Verdict
 		want float64
 	}{
-		{Verdict{OutcomeAccepted, 0, 0.8}, 100},  // 100 - 0 + 8 -> clamp 100
-		{Verdict{OutcomeAccepted, 1, 0}, 92},     // 100 - 8
-		{Verdict{OutcomeCorrected, 2, -0.2}, 42}, // 60 - 16 - 2
-		{Verdict{OutcomeAbandoned, 0, -1}, 5},    // 15 - 10
+		{Verdict{Outcome: OutcomeAccepted, Corrections: 0, Sentiment: 0.8}, 100},  // 100 - 0 + 8 -> clamp 100
+		{Verdict{Outcome: OutcomeAccepted, Corrections: 1, Sentiment: 0}, 92},     // 100 - 8
+		{Verdict{Outcome: OutcomeCorrected, Corrections: 2, Sentiment: -0.2}, 42}, // 60 - 16 - 2
+		{Verdict{Outcome: OutcomeAbandoned, Corrections: 0, Sentiment: -1}, 5},    // 15 - 10
 	}
 	for _, tc := range cases {
 		if got := ScoreSuccess(tc.v); math.Abs(got-tc.want) > 0.05 {

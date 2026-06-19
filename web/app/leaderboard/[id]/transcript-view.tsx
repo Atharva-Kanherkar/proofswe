@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Markdown from "./markdown";
+import { HiCode, parseToolOutput, formatToolCall } from "./code";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_PROOFSWE_API_URL ?? "https://api.proofswe.com";
@@ -111,41 +112,41 @@ function isContextBlob(text: string): boolean {
   );
 }
 
-function CodeBlock({ text }: { text: string }) {
-  return (
-    <pre className="code-block">
-      <code>{text}</code>
-    </pre>
-  );
-}
-
 function lineCount(text: string): number {
   return text ? text.split("\n").length : 0;
 }
 
 function ToolCall({ turn }: { turn: Turn }) {
+  const { code, lang } = formatToolCall(turn.text);
   return (
     <details className="turn turn-tool" open>
       <summary>
         <span className="turn-icon">⚙</span>
         <span className="turn-role">Tool call</span>
         {turn.name ? <span className="turn-name">{turn.name}</span> : null}
+        {lang ? <span className="lang-tag">{lang}</span> : null}
       </summary>
-      <CodeBlock text={turn.text} />
+      <HiCode code={code} lang={lang || undefined} />
     </details>
   );
 }
 
 function ToolOutput({ turn }: { turn: Turn }) {
+  const { meta, body } = parseToolOutput(turn.text);
   return (
     <details className="turn turn-output">
       <summary>
         <span className="turn-icon">↳</span>
         <span className="turn-role">Output</span>
         {turn.name ? <span className="turn-name">{turn.name}</span> : null}
-        <span className="turn-hint">{lineCount(turn.text)} lines</span>
+        {meta.map((m, i) => (
+          <span key={i} className="meta-chip">
+            {m}
+          </span>
+        ))}
+        <span className="turn-hint">{lineCount(body)} lines</span>
       </summary>
-      <CodeBlock text={turn.text} />
+      <HiCode code={body} />
     </details>
   );
 }
@@ -289,7 +290,7 @@ export default function TranscriptView({ id }: { id: string }) {
                   <span className="axis-name">{axis.name}</span>
                   <span className="axis-score">{axis.score}</span>
                 </div>
-                <div className="axis-bar">
+                <div className={`axis-bar axis-${scoreTone(axis.score)}`}>
                   <span
                     style={{
                       width: `${Math.max(0, Math.min(100, axis.score))}%`,

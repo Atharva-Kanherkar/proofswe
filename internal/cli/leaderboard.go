@@ -213,7 +213,7 @@ func buildLeaderboardItem(record publishedCorpusRecord) leaderboardSubmission {
 		Model:           record.Model,
 		Contributor:     rec.Contributor,
 		Repo:            publicRepoName(record.RepoURL),
-		Title:           deriveTitle(record.Task),
+		Title:           leaderboardTitle(record),
 		GitHubPath:      rec.GitHubPath,
 		GitHubURL:       githubCorpusURL(rec.GitHubPRURL, rec.GitHubCommit, rec.GitHubPath),
 		GitHubPRURL:     rec.GitHubPRURL,
@@ -227,12 +227,23 @@ func buildLeaderboardItem(record publishedCorpusRecord) leaderboardSubmission {
 	if rec.Scorecard != nil {
 		item.Score = roundScore(rec.Scorecard.Composite)
 		item.ScoreVersion = rec.Scorecard.ScoreVersion
-		item.Summary = outcomeSummary(record.Task, rec.Scorecard)
+		item.Summary = firstNonEmpty(strings.TrimSpace(rec.Scorecard.TaskSummary), outcomeSummary(record.Task, rec.Scorecard))
 		item.Axes = leaderboardAxesFrom(rec.Scorecard)
 		item.Utility = rec.Scorecard.Utility
 		item.Note = rec.Scorecard.Note
 	}
 	return item
+}
+
+// leaderboardTitle prefers the blinded judge's one-line goal; it falls back to
+// the first real developer prompt for sessions judged before titles existed.
+func leaderboardTitle(record publishedCorpusRecord) string {
+	if record.Submission.Scorecard != nil {
+		if t := strings.TrimSpace(record.Submission.Scorecard.Title); t != "" {
+			return t
+		}
+	}
+	return deriveTitle(record.Task)
 }
 
 // buildLeaderboardDetail adds the full ordered conversation to a list item.
