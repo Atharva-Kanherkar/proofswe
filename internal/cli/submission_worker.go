@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	judgeVersion       = "judge/1"
-	judgePromptVersion = "judge-prompt/2"
+	judgeVersion       = "judge/2"
+	judgePromptVersion = "judge-prompt/3"
 	workerIdleDelay    = 500 * time.Millisecond
 	workerPersistLimit = 10 * time.Second
 )
@@ -78,6 +78,25 @@ func (w submissionWorker) process(ctx context.Context, job judgeJobRecord) {
 			defer cancel()
 			if failErr := w.store.FailJudgeJob(persistCtx, job, err.Error(), time.Now().UTC(), isPermanentJudgeFailure(err)); failErr != nil {
 				w.logger.Warn("record judge failure failed", "submission_id", job.SubmissionID, "error", failErr)
+			}
+			return
+		}
+		if verdict.TaskType == judge.TaskTypeNoise {
+			completed := time.Now().UTC()
+			run := judgeRunRecord{
+				SubmissionID:  job.SubmissionID,
+				JudgeModel:    serverJudgeModel(w.judge),
+				JudgeVersion:  judgeVersion,
+				PromptVersion: judgePromptVersion,
+				Verdict:       verdict,
+				Status:        submissionStatusFiltered,
+				StartedAt:     started,
+				CompletedAt:   completed,
+			}
+			persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerPersistLimit)
+			defer cancel()
+			if err := w.store.CompleteJudgeJob(persistCtx, job, run); err != nil {
+				w.logger.Warn("complete noise filter job failed", "submission_id", job.SubmissionID, "error", err)
 			}
 			return
 		}

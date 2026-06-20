@@ -18,18 +18,20 @@ import (
 )
 
 const (
-	submissionStatusQueued  = "queued"
-	submissionStatusJudging = "judging"
-	submissionStatusJudged  = "judged"
-	submissionStatusPublish = "publishing"
-	submissionStatusPubDone = "published"
-	submissionStatusFailed  = "failed"
+	submissionStatusQueued   = "queued"
+	submissionStatusJudging  = "judging"
+	submissionStatusJudged   = "judged"
+	submissionStatusPublish  = "publishing"
+	submissionStatusPubDone  = "published"
+	submissionStatusFiltered = "filtered"
+	submissionStatusFailed   = "failed"
 
-	judgeJobStatusQueued  = "queued"
-	judgeJobStatusJudging = "judging"
-	judgeJobStatusJudged  = "judged"
-	judgeJobStatusPubDone = "published"
-	judgeJobStatusFailed  = "failed"
+	judgeJobStatusQueued   = "queued"
+	judgeJobStatusJudging  = "judging"
+	judgeJobStatusJudged   = "judged"
+	judgeJobStatusPubDone  = "published"
+	judgeJobStatusFiltered = "filtered"
+	judgeJobStatusFailed   = "failed"
 
 	maxJudgeAttempts       = 3
 	judgeRetryBackoff      = 30 * time.Second
@@ -429,11 +431,19 @@ func (s *memorySubmissionStore) CompleteJudgeJob(_ context.Context, job judgeJob
 	defer s.mu.Unlock()
 	stored := s.jobs[job.ID]
 	stored.status = judgeJobStatusJudged
+	if run.Status == submissionStatusFiltered {
+		stored.status = judgeJobStatusFiltered
+	}
 	stored.record.Attempts = 0
 	stored.updatedAt = now
 	s.jobs[job.ID] = stored
 	rec := s.submissions[job.SubmissionID]
 	rec.Status = submissionStatusJudged
+	if run.Status == submissionStatusFiltered {
+		rec.Status = submissionStatusFiltered
+		rec.ErrorCode = "noise"
+		rec.ErrorMessage = run.Verdict.Reason
+	}
 	rec.Scorecard = run.Scorecard
 	rec.UpdatedAt = now
 	s.submissions[job.SubmissionID] = rec

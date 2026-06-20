@@ -421,7 +421,7 @@ func isPendingSubmissionStatus(status string) bool {
 
 func isTerminalSubmissionStatus(status string) bool {
 	switch status {
-	case submissionStatusPubDone, submissionStatusFailed:
+	case submissionStatusPubDone, submissionStatusFiltered, submissionStatusFailed:
 		return true
 	default:
 		return false
@@ -463,6 +463,8 @@ func printSubmitText(w io.Writer, r submitResponse) {
 		if r.Scorecard.Note != "" {
 			_, _ = fmt.Fprintf(w, "  note        %s\n", r.Scorecard.Note)
 		}
+	} else if r.Status == submissionStatusFiltered {
+		_, _ = fmt.Fprintln(w, "\n  not scored   filtered as non-SWE Q&A/noise")
 	} else {
 		_, _ = fmt.Fprintln(w, "\n  official score pending server judge")
 	}

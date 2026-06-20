@@ -848,6 +848,50 @@ func TestSubmissionWorker_PublishesJudgedTask(t *testing.T) {
 	}
 }
 
+func TestSubmissionWorker_FiltersNoise(t *testing.T) {
+	store := newMemorySubmissionStore()
+	task := corpusTaskForServe(score.ExtractedSignals{}, true)
+	rec, err := store.CreateSubmission(t.Context(), submitRequest{SchemaVersion: submitSchemaVersion, Task: task})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	job, ok, err := store.ClaimJudgeJob(t.Context(), "worker", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	publisher := &fakeCorpusPublisher{mapping: corpusMapping{Path: "must-not-publish.json"}}
+	w := submissionWorker{
+		store: store,
+		judge: judge.FakeJudge{V: judge.Verdict{
+			Outcome:  judge.OutcomeAccepted,
+			TaskType: judge.TaskTypeNoise,
+			Reason:   "pure open-ended product ideation with no concrete artifact",
+		}},
+		publisher: publisher,
+	}
+	w.process(t.Context(), job)
+
+	got, ok, err := store.GetSubmission(t.Context(), rec.SubmissionID)
+	if err != nil || !ok {
+		t.Fatalf("get ok=%v err=%v", ok, err)
+	}
+	if got.Status != submissionStatusFiltered || got.Scorecard != nil {
+		t.Fatalf("filtered submission = %+v, want terminal filtered status without scorecard", got)
+	}
+	if got.ErrorCode != "noise" || got.ErrorMessage == "" {
+		t.Fatalf("filter metadata = %q %q, want noise reason", got.ErrorCode, got.ErrorMessage)
+	}
+	if publisher.calls.Load() != 0 {
+		t.Fatalf("publisher calls = %d, want 0", publisher.calls.Load())
+	}
+	if !isTerminalSubmissionStatus(got.Status) {
+		t.Fatalf("filtered status must stop client polling")
+	}
+	if records, err := store.ListPublishedCorpus(t.Context(), publishedCorpusQuery{}); err != nil || len(records) != 0 {
+		t.Fatalf("leaderboard records = %v, err=%v; filtered task must be absent", records, err)
+	}
+}
+
 func TestSubmissionWorker_DuplicateTaskReusesExistingMapping(t *testing.T) {
 	store := newMemorySubmissionStore()
 	task := corpusTaskForServe(score.ExtractedSignals{}, true)
