@@ -52,6 +52,15 @@ func TestBuildPrompt_ExplainsRealSWERubric(t *testing.T) {
 	}
 }
 
+func TestBuildPrompt_AsksForNoiseClassification(t *testing.T) {
+	p := BuildPrompt([]Turn{{Role: "user", Text: "what should I build?"}}, nil)
+	for _, want := range []string{"title", "summary", "task_type", "pure general Q&A", "what should I build?", "Code edits are not required", "does not end in code", "concrete software artifact"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("prompt missing noise-filter rule %q:\n%s", want, p)
+		}
+	}
+}
+
 func TestBuildPrompt_IncludesProductSteeringRules(t *testing.T) {
 	p := BuildPrompt([]Turn{
 		{Role: "user", Text: "why do i need an E2B template id? use my E2B keys and execute tasks in sandboxes"},
@@ -147,15 +156,38 @@ func TestParseVerdict_ClampsSentiment(t *testing.T) {
 	}
 }
 
+func TestParseVerdict_ParsesTaskClassification(t *testing.T) {
+	v, err := ParseVerdict(`{"task_type":"NOISE","reason":"general ideation","outcome":"accepted","corrections":0,"sentiment":0}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.TaskType != TaskTypeNoise || v.Reason != "general ideation" {
+		t.Fatalf("verdict = %+v, want normalized noise classification", v)
+	}
+	if _, err := ParseVerdict(`{"task_type":"chat","outcome":"accepted","corrections":0,"sentiment":0}`); err == nil {
+		t.Fatal("expected unknown task_type to fail")
+	}
+}
+
+func TestParseVerdict_LegacyResponseDefaultsToSWE(t *testing.T) {
+	v, err := ParseVerdict(`{"outcome":"accepted","corrections":0,"sentiment":0}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.TaskType != TaskTypeSWE {
+		t.Fatalf("task_type = %q, want %q", v.TaskType, TaskTypeSWE)
+	}
+}
+
 func TestScoreSuccess(t *testing.T) {
 	cases := []struct {
 		v    Verdict
 		want float64
 	}{
-		{Verdict{Outcome: OutcomeAccepted, Corrections: 0, Sentiment: 0.8}, 100},  // 100 - 0 + 8 -> clamp 100
-		{Verdict{Outcome: OutcomeAccepted, Corrections: 1, Sentiment: 0}, 92},     // 100 - 8
+		{Verdict{Outcome: OutcomeAccepted, Sentiment: 0.8}, 100},                  // 100 - 0 + 8 -> clamp 100
+		{Verdict{Outcome: OutcomeAccepted, Corrections: 1}, 92},                   // 100 - 8
 		{Verdict{Outcome: OutcomeCorrected, Corrections: 2, Sentiment: -0.2}, 42}, // 60 - 16 - 2
-		{Verdict{Outcome: OutcomeAbandoned, Corrections: 0, Sentiment: -1}, 5},    // 15 - 10
+		{Verdict{Outcome: OutcomeAbandoned, Sentiment: -1}, 5},                    // 15 - 10
 	}
 	for _, tc := range cases {
 		if got := ScoreSuccess(tc.v); math.Abs(got-tc.want) > 0.05 {

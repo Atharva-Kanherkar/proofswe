@@ -31,19 +31,28 @@ type Turn struct {
 // Outcome is how the session resolved for the developer.
 type Outcome string
 
+type TaskType string
+
 const (
 	OutcomeAccepted  Outcome = "accepted"  // approved/used the result
 	OutcomeCorrected Outcome = "corrected" // worked only after the developer pushed back
 	OutcomeAbandoned Outcome = "abandoned" // gave up / left unresolved
 )
 
+const (
+	TaskTypeSWE   TaskType = "swe"
+	TaskTypeNoise TaskType = "noise"
+)
+
 // Verdict is the judge's structured read of the developer's reactions.
 type Verdict struct {
-	Title       string  `json:"title"`   // ≤8-word title of the task's main goal
-	Summary     string  `json:"summary"` // one sentence: what the developer set out to do
-	Outcome     Outcome `json:"outcome"`
-	Corrections int     `json:"corrections"`
-	Sentiment   float64 `json:"sentiment"` // -1 (frustrated) .. 1 (delighted)
+	Title       string   `json:"title"`   // ≤8-word title of the task's main goal
+	Summary     string   `json:"summary"` // one sentence: what the developer set out to do
+	Outcome     Outcome  `json:"outcome"`
+	Corrections int      `json:"corrections"`
+	Sentiment   float64  `json:"sentiment"` // -1 (frustrated) .. 1 (delighted)
+	TaskType    TaskType `json:"task_type,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
 }
 
 const (
@@ -79,9 +88,16 @@ Your job is to judge developer acceptance and assistant-caused burden. Separate 
   - abandonment: the developer gives up, asks another agent/human to take over, or leaves the work unresolved.
 
 For exploratory product engineering, deployment, release, and PR-repair sessions, expect multi-turn collaboration. Penalize repeated assistant mistakes and unnecessary churn, but do not punish the assistant simply because the developer refined the product or because real CI/deployment constraints appeared late.
-Reply with ONLY this JSON: {"title":"...","summary":"...","outcome":"accepted|corrected|abandoned","corrections":<int>,"sentiment":<number between -1 and 1>}
+First classify whether this belongs in a software-engineering benchmark:
+  - task_type = swe for work that concretely advances a software project. Code edits are not required: debugging, architecture, requirements for a concrete product, code review, tests, CI, deployment, and release work are SWE.
+  - task_type = noise only when the conversation is pure general Q&A or open-ended ideation (for example, "what should I build?") and does not end in code or another concrete software artifact, or otherwise advance a concrete software task. A question alone is not noise if its answer directly supports an active software task.
+  - Do not use task quality, success, length, or whether the assistant literally emitted code as the classification. Use noise only for conversations that should not be scored or placed on a coding leaderboard.
+
+Reply with ONLY this JSON: {"title":"...","summary":"...","task_type":"swe|noise","reason":"<brief classification reason>","outcome":"accepted|corrected|abandoned","corrections":<int>,"sentiment":<number between -1 and 1>}
   title       = a concise, specific title for the task's MAIN GOAL — at most 8 words, no trailing period, describe what the developer set out to ACHIEVE (not the outcome). E.g. "Improve the loader screen UX" or "Fix CI failures on the auth PR". Ignore injected agent/context/instruction text; focus on the developer's actual request.
   summary     = one plain, specific sentence describing what the developer was trying to accomplish in this session.
+  task_type  = swe for a concrete software-engineering task; noise for pure non-SWE Q&A/ideation with no concrete software outcome.
+  reason     = one short sentence explaining only the task_type classification.
   outcome     = accepted if the developer approved, merged, released, confirmed, or used the result overall; corrected if the final result worked only after material assistant-caused corrections; abandoned if the work was left unresolved.
   corrections = count assistant-caused corrections only. Do not count normal task evolution, added scope, credentials, CI/deployment facts, background notifications, "continue", or choosing options unless they fix a specific assistant mistake.
   sentiment   = the developer's frustration↔satisfaction over the WHOLE session, -1 (furious) to 1 (delighted). Keep this separate from outcome: a shipped or merged session can still have negative sentiment if the path was painful, and an unshipped session can still be calm. Profanity, insults, ALL-CAPS, sarcasm and exasperation ("wtf", "are you serious", "I already told you") are frustration signals. Do NOT anchor on the final turn.`
@@ -121,6 +137,11 @@ func ParseVerdict(raw string) (Verdict, error) {
 		return Verdict{}, fmt.Errorf("judge: invalid outcome %q", v.Outcome)
 	}
 	v.Outcome = outcome
+	taskType, ok := normalizeTaskType(v.TaskType)
+	if !ok {
+		return Verdict{}, fmt.Errorf("judge: invalid task_type %q", v.TaskType)
+	}
+	v.TaskType = taskType
 	v.Sentiment = clamp(v.Sentiment, -1, 1)
 	if v.Corrections < 0 {
 		v.Corrections = 0
@@ -128,6 +149,19 @@ func ParseVerdict(raw string) (Verdict, error) {
 	v.Title = truncate(strings.TrimSpace(v.Title), maxVerdictTitleChars)
 	v.Summary = truncate(strings.TrimSpace(v.Summary), maxVerdictSummaryChars)
 	return v, nil
+}
+
+func normalizeTaskType(t TaskType) (TaskType, bool) {
+	switch TaskType(strings.ToLower(strings.TrimSpace(string(t)))) {
+	case "", TaskTypeSWE:
+		// Empty is accepted for backward compatibility with in-flight responses
+		// from the previous prompt version.
+		return TaskTypeSWE, true
+	case TaskTypeNoise:
+		return TaskTypeNoise, true
+	default:
+		return "", false
+	}
 }
 
 // ScoreSuccess maps a Verdict to the 0–100 success axis. The constants are

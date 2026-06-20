@@ -528,9 +528,22 @@ func (s *postgresSubmissionStore) CompleteJudgeJob(ctx context.Context, job judg
 	if err != nil {
 		return err
 	}
-	scorecardJSON, err := json.Marshal(run.Scorecard)
-	if err != nil {
-		return err
+	var scorecardJSON any
+	if run.Scorecard != nil {
+		encoded, err := json.Marshal(run.Scorecard)
+		if err != nil {
+			return err
+		}
+		scorecardJSON = encoded
+	}
+	submissionStatus := submissionStatusJudged
+	jobStatus := judgeJobStatusJudged
+	var errorCode, errorMessage any
+	if run.Status == submissionStatusFiltered {
+		submissionStatus = submissionStatusFiltered
+		jobStatus = judgeJobStatusFiltered
+		errorCode = "noise"
+		errorMessage = run.Verdict.Reason
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -545,16 +558,16 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE submissions
-SET status = $1, scorecard_json = $2, error_code = NULL, error_message = NULL, updated_at = $3
-WHERE submission_id = $4
-`, submissionStatusJudged, scorecardJSON, run.CompletedAt, job.SubmissionID); err != nil {
+SET status = $1, scorecard_json = $2, error_code = $3, error_message = $4, updated_at = $5
+WHERE submission_id = $6
+`, submissionStatus, scorecardJSON, errorCode, errorMessage, run.CompletedAt, job.SubmissionID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE judge_jobs
 SET status = $1, attempts = 0, updated_at = $2, locked_at = NULL, locked_by = NULL
 WHERE id = $3
-`, judgeJobStatusJudged, run.CompletedAt, job.ID); err != nil {
+`, jobStatus, run.CompletedAt, job.ID); err != nil {
 		return err
 	}
 	return tx.Commit()
