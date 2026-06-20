@@ -54,7 +54,7 @@ func TestBuildPrompt_ExplainsRealSWERubric(t *testing.T) {
 
 func TestBuildPrompt_AsksForNoiseClassification(t *testing.T) {
 	p := BuildPrompt([]Turn{{Role: "user", Text: "what should I build?"}}, nil)
-	for _, want := range []string{"task_type", "pure general Q&A", "what should I build?", "Code edits are not required", "does not end in code", "concrete software artifact"} {
+	for _, want := range []string{"title", "summary", "task_type", "pure general Q&A", "what should I build?", "Code edits are not required", "does not end in code", "concrete software artifact"} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("prompt missing noise-filter rule %q:\n%s", want, p)
 		}

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 const API_BASE =
@@ -17,15 +18,12 @@ type ModelRow = {
 
 type SubmissionRow = {
   submission_id: string;
-  task_id: string;
   harness: string;
   model: string;
-  contributor?: string;
   repo?: string;
+  title?: string;
   score: number;
   summary?: string;
-  github_url?: string;
-  github_pr_url?: string;
   published_at: string;
 };
 
@@ -49,8 +47,7 @@ export default function LeaderboardView() {
 
   useEffect(() => {
     const controller = new AbortController();
-
-    fetch(`${API_BASE.replace(/\/$/, "")}/v1/leaderboard?limit=50`, {
+    fetch(`${API_BASE.replace(/\/$/, "")}/v1/leaderboard?limit=100`, {
       signal: controller.signal,
     })
       .then((response) => {
@@ -61,12 +58,9 @@ export default function LeaderboardView() {
       })
       .then(setData)
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
+        if (error instanceof DOMException && error.name === "AbortError") return;
         setFailed(true);
       });
-
     return () => controller.abort();
   }, []);
 
@@ -113,7 +107,7 @@ export default function LeaderboardView() {
                 {data.models.map((row, index) => (
                   <tr key={`${row.harness}:${row.model}`}>
                     <td className="rank-number">{index + 1}</td>
-                    <th scope="row">{row.model}</th>
+                    <th scope="row">{row.model || "unknown"}</th>
                     <td>{row.harness}</td>
                     <td>{row.submission_count}</td>
                     <td className="rank-score">{row.average_score}</td>
@@ -129,47 +123,45 @@ export default function LeaderboardView() {
       <section className="leaderboard-section" aria-labelledby="recent-sessions">
         <div className="leaderboard-section-heading">
           <h2 id="recent-sessions">Recent sessions</h2>
-          <span>Updated {formatDate(data.generated_at)}</span>
+          <span>
+            {data.recent.length} session{data.recent.length === 1 ? "" : "s"} ·
+            updated {formatDate(data.generated_at)}
+          </span>
         </div>
 
         <div className="session-list">
           {data.recent.map((session) => (
-            <article className="session-row" key={session.submission_id}>
-              <div className="session-score" aria-label={`Score ${session.score}`}>
+            <Link
+              className="session-row"
+              key={session.submission_id}
+              href={`/leaderboard/${session.submission_id}`}
+            >
+              <span
+                className="session-score"
+                aria-label={`Score ${session.score}`}
+              >
                 {session.score}
-              </div>
-              <div className="session-main">
-                <div className="session-meta">
-                  <strong>{session.model}</strong>
+              </span>
+              <span className="session-main">
+                <span className="session-title">
+                  {session.title || "Untitled session"}
+                </span>
+                <span className="session-meta">
+                  <strong>{session.model || "unknown"}</strong>
                   <span>{session.harness}</span>
                   {session.repo ? <span>{session.repo}</span> : null}
                   <time dateTime={session.published_at}>
                     {formatDate(session.published_at)}
                   </time>
-                </div>
-                <p>{session.summary || "Judged session published to the corpus."}</p>
-                <div className="session-links">
-                  {session.github_url ? (
-                    <a
-                      href={session.github_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      View transcript ↗
-                    </a>
-                  ) : null}
-                  {session.github_pr_url ? (
-                    <a
-                      href={session.github_pr_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Publication PR ↗
-                    </a>
-                  ) : null}
-                </div>
-              </div>
-            </article>
+                </span>
+                {session.summary ? (
+                  <span className="session-line">{session.summary}</span>
+                ) : null}
+              </span>
+              <span className="session-chevron" aria-hidden="true">
+                →
+              </span>
+            </Link>
           ))}
           {data.recent.length === 0 ? (
             <p className="leaderboard-state">No published sessions yet.</p>

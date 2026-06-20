@@ -670,8 +670,22 @@ func TestSubmissionHandler_LeaderboardEndpoint(t *testing.T) {
 	if got.Recent[0].TaskID != task.TaskID || got.Models[0].Model != "gpt-5" {
 		t.Fatalf("wrong leaderboard item = %+v", got)
 	}
+	// The expandable detail surfaces the developer's opening ask and the
+	// deterministic outcome/score breakdown — content that is already public in
+	// the corpus repo.
+	if got.Recent[0].TaskStatement != "publish a displayable task" {
+		t.Fatalf("task statement missing from detail: %+v", got.Recent[0])
+	}
+	if got.Recent[0].Outcome == nil || got.Recent[0].Outcome.Verification != "passed" {
+		t.Fatalf("outcome missing from detail: %+v", got.Recent[0])
+	}
+	if len(got.Recent[0].Axes) == 0 {
+		t.Fatalf("scored axes missing from detail: %+v", got.Recent[0])
+	}
+	// The raw agent trajectory and the code patch must still never enter the
+	// feed — only the task statement, outcome, and score breakdown do.
 	encoded := rr.Body.String()
-	for _, forbidden := range []string{"publish a displayable task", "fixed", "+++ b/main.go"} {
+	for _, forbidden := range []string{"fixed", "+++ b/main.go", "apply_patch"} {
 		if strings.Contains(encoded, forbidden) {
 			t.Fatalf("leaderboard leaked raw corpus content %q in %s", forbidden, encoded)
 		}

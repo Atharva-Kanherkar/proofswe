@@ -141,6 +141,52 @@ func newSubmissionHandlerWithContext(ctx context.Context, cfg Config, opts judge
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(buildLeaderboardResponse(records, models, time.Now()))
 	})
+	mux.HandleFunc("/v1/leaderboard/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("allow", http.MethodGet+", "+http.MethodHead)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/v1/leaderboard/")
+		if id == "" || strings.Contains(id, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		rec, ok, err := store.GetSubmission(r.Context(), id)
+		if err != nil {
+			http.Error(w, "get submission: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok || rec.Scorecard == nil {
+			http.NotFound(w, r)
+			return
+		}
+		task, ok, err := store.GetTaskByID(r.Context(), rec.TaskID)
+		if err != nil {
+			http.Error(w, "get task: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		detail := buildLeaderboardDetail(publishedCorpusRecord{
+			Submission: rec,
+			Harness:    task.Harness,
+			Model:      task.Model,
+			RepoURL:    task.Repo.RemoteURL,
+			Task:       task,
+		})
+		w.Header().Set("access-control-allow-origin", "*")
+		w.Header().Set("cache-control", "public, max-age=60, stale-while-revalidate=300")
+		w.Header().Set("content-type", "application/json")
+		if r.Method == http.MethodHead {
+			return
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(detail)
+	})
 	mux.HandleFunc("/v1/submissions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("allow", http.MethodPost)
